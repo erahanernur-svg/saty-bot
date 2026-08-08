@@ -168,7 +168,10 @@ bot.on('text', (ctx) =>
 //     Telegram webhook (must also have a public URL), which is the most reliable
 //     mode on Render (they can send POST events to you whenever a message arrives).
 const PORT = Number(process.env.PORT) || 3000;
-const WEBHOOK_URL = (process.env.WEBHOOK_URL || '').trim().replace(/\/+$/, '');
+const WEBHOOK_URL = (process.env.WEBHOOK_URL || '')
+  .trim()
+  .replace(/\/webhook\/?$/i, '') // tolerate a URL that already ends with /webhook
+  .replace(/\/+$/, '');          // then normalize any other trailing slash
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
 
 const server = createServer((req, res) => {
