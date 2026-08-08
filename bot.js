@@ -34,7 +34,7 @@ import * as market from './src/services/marketplace.js';
 import * as support from './src/services/support.js';
 import * as notify from './src/services/notify.js';
 import * as settings from './src/services/settings.js';
-import { ORDER_STATUS, PRODUCT_STATUS, fmtPrice, fmtDate, esc } from './src/format.js';
+import { ORDER_STATUS, PRODUCT_STATUS, fmtPrice, fmtDate, esc, mainMenu } from './src/format.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
