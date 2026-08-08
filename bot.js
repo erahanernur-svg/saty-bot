@@ -30,7 +30,7 @@ try {
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 if (!BOT_TOKEN) {
-  console.error('TELEGRAM_BOT_TOKEN is not set. Create artifacts/bot/.env (see .env.example).');
+  console.error('TELEGRAM_BOT_TOKEN is not set. Create a .env file (see .env.example) or set the env var on your host.');
   process.exit(1);
 }
 
