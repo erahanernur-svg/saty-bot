@@ -111,7 +111,10 @@ bot.command('start', async (ctx) => {
 
   if (!siteUserId) {
     const existing = await getLinkedUserId(chatId);
-    if (existing) return showMenu(ctx, `🎉 Қайырлы күн! Басты мәзір:`);
+    if (existing) {
+      const u = await getUser(existing);
+      if (u && String(u.telegramChatId) === chatId) return showMenu(ctx, `🎉 Қайырлы күн! Басты мәзір:`);
+    }
     return ctx.reply(
       '👋 <b>Saty ботына қош келдіңіз!</b>\n\n' +
         'Аккаунтты сату үшін сайттағы «Телеграмға қосу» түймесін басып, ботты ашыңыз — ' +
@@ -132,6 +135,11 @@ bot.command('start', async (ctx) => {
 
   const user = await getUser(siteUserId);
   const name = user?.displayName || siteUserId;
+
+  // Already verified & linked to this chat → straight to the main menu.
+  if (user?.isVerified && String(user?.telegramChatId ?? '') === chatId) {
+    return showMenu(ctx, `🎉 <b>Аккаунт байланысты!</b>\n\n👤 ${esc(name)}`);
+  }
 
   await ctx.reply(
     `✅ <b>Аккаунт сәтті байланысты!</b>\n\n` +
@@ -694,6 +702,12 @@ const server = createServer((req, res) => {
 });
 
 async function start() {
+  // Startup diagnostics — make it obvious in Render logs what is running.
+  console.log(`[boot] mode=${PUBLIC_URL ? 'webhook' : 'polling'} port=${PORT} publicUrl=${PUBLIC_URL || '(none)'}`);
+  console.log(
+    `[boot] firebase=${process.env.FIREBASE_SERVICE_ACCOUNT_JSON ? 'env:FIREBASE_SERVICE_ACCOUNT_JSON' : process.env.GOOGLE_APPLICATION_CREDENTIALS ? `env:GOOGLE_APPLICATION_CREDENTIALS=${process.env.GOOGLE_APPLICATION_CREDENTIALS}` : 'serviceAccountKey.json (project root)'}`
+  );
+
   server.listen(PORT, () => console.log(`Saty Telegram bot HTTP server listening on :${PORT}`));
 
   notify.stopRelay();
@@ -708,6 +722,11 @@ async function start() {
   await bot.launch();
   console.log('Saty Telegram bot started (polling).');
 }
+
+// Never let a handler error go silently — always log it.
+bot.catch((err) => {
+  console.error('[bot] unhandled update error:', err?.stack || err);
+});
 
 start().catch((err) => {
   console.error('Failed to start bot:', err.message);
