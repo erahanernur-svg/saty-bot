@@ -1,4 +1,3 @@
-import { doc, updateDoc } from 'firebase-admin/firestore';
 import { db, COLLECTIONS } from '../db.js';
 
 /**
@@ -6,7 +5,7 @@ import { db, COLLECTIONS } from '../db.js';
  * fields: { telegram: boolean }
  */
 export async function setTelegramNotify(uid, enabled) {
-  await updateDoc(doc(db, COLLECTIONS.users, uid), { telegramNotify: Boolean(enabled) });
+  await db.collection(COLLECTIONS.users).doc(String(uid)).update({ telegramNotify: Boolean(enabled) });
 }
 
 export async function getTelegramNotify(uid) {

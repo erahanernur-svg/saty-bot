@@ -1,15 +1,3 @@
-import {
-  query,
-  where,
-  orderBy,
-  limit as qlimit,
-  getDocs,
-  getDoc,
-  doc,
-  updateDoc,
-  addDoc,
-  runTransaction,
-} from 'firebase-admin/firestore';
 import { db, serverTimestamp, increment, COLLECTIONS } from '../db.js';
 
 /** Deep-copy Firestore snapshots into plain JS (dates → Date). */
@@ -24,35 +12,33 @@ export function toPlain(data) {
 }
 
 export async function getBuyerOrders(uid, n = 10) {
-  const q = query(
-    db.collection(COLLECTIONS.orders),
-    where('buyerId', '==', uid),
-    orderBy('createdAt', 'desc'),
-    qlimit(n)
-  );
-  const snap = await getDocs(q);
+  const snap = await db
+    .collection(COLLECTIONS.orders)
+    .where('buyerId', '==', uid)
+    .orderBy('createdAt', 'desc')
+    .limit(n)
+    .get();
   return snap.docs.map((d) => ({ id: d.id, ...toPlain(d.data()) }));
 }
 
 export async function getSellerOrders(uid, n = 10) {
-  const q = query(
-    db.collection(COLLECTIONS.orders),
-    where('sellerId', '==', uid),
-    orderBy('createdAt', 'desc'),
-    qlimit(n)
-  );
-  const snap = await getDocs(q);
+  const snap = await db
+    .collection(COLLECTIONS.orders)
+    .where('sellerId', '==', uid)
+    .orderBy('createdAt', 'desc')
+    .limit(n)
+    .get();
   return snap.docs.map((d) => ({ id: d.id, ...toPlain(d.data()) }));
 }
 
 export async function getOrderById(orderId) {
-  const snap = await getDoc(doc(db, COLLECTIONS.orders, orderId));
+  const snap = await db.collection(COLLECTIONS.orders).doc(orderId).get();
   return snap.exists ? { id: snap.id, ...toPlain(snap.data()) } : null;
 }
 
 /** Seller delivers the account → status 'processing'. */
 export async function deliverOrder(orderId) {
-  await updateDoc(doc(db, COLLECTIONS.orders, orderId), {
+  await db.collection(COLLECTIONS.orders).doc(orderId).update({
     status: 'processing',
     updatedAt: serverTimestamp(),
   });
@@ -60,14 +46,14 @@ export async function deliverOrder(orderId) {
 
 /** Buyer confirms receipt → money released to seller, status 'completed'. */
 export async function confirmOrder(orderId) {
-  const ref = doc(db, COLLECTIONS.orders, orderId);
-  await runTransaction(db, async (tx) => {
+  const ref = db.collection(COLLECTIONS.orders).doc(orderId);
+  await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) return;
     const order = snap.data();
     if (order.status !== 'processing') return;
     // Release the held money to the seller atomically with the status change.
-    tx.set(doc(db, COLLECTIONS.users, order.sellerId), { balance: increment(order.price) }, { merge: true });
+    tx.set(db.collection(COLLECTIONS.users).doc(String(order.sellerId)), { balance: increment(order.price) }, { merge: true });
     tx.set(ref, { status: 'completed', updatedAt: serverTimestamp() }, { merge: true });
   });
 }
@@ -77,12 +63,12 @@ export async function confirmOrder(orderId) {
  * Returns a human-readable result for the chat.
  */
 export async function cancelOrder(orderId) {
-  const ref = doc(db, COLLECTIONS.orders, orderId);
+  const ref = db.collection(COLLECTIONS.orders).doc(orderId);
   let refunded = false;
   let productId = null;
   let cancelledAllowed = false;
 
-  await runTransaction(db, async (tx) => {
+  await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) return;
     const order = snap.data();
@@ -91,7 +77,7 @@ export async function cancelOrder(orderId) {
 
     if (order.status === 'paid') {
       // Money was debited at checkout — refund the buyer.
-      tx.set(doc(db, COLLECTIONS.users, order.buyerId), { balance: increment(order.price) }, { merge: true });
+      tx.set(db.collection(COLLECTIONS.users).doc(String(order.buyerId)), { balance: increment(order.price) }, { merge: true });
       refunded = true;
     }
     productId = order.productId;
@@ -102,7 +88,7 @@ export async function cancelOrder(orderId) {
   // Re-list the account only if it was actually sold (paid).
   if (productId && refunded) {
     try {
-      await updateDoc(doc(db, COLLECTIONS.products, productId), {
+      await db.collection(COLLECTIONS.products).doc(String(productId)).update({
         status: 'active',
         soldOrderId: null,
         updatedAt: serverTimestamp(),
@@ -117,7 +103,7 @@ export async function cancelOrder(orderId) {
 
 /** Seller creates a withdraw request. */
 export async function createWithdraw(sellerId, { amount, method, details }) {
-  await addDoc(db.collection(COLLECTIONS.withdraw), {
+  await db.collection(COLLECTIONS.withdraw).add({
     sellerId,
     amount: Number(amount),
     method,
@@ -130,18 +116,17 @@ export async function createWithdraw(sellerId, { amount, method, details }) {
 
 /** Seller's own products (any status). */
 export async function getSellerProducts_(uid, n = 20) {
-  const q = query(
-    db.collection(COLLECTIONS.products),
-    where('sellerId', '==', uid),
-    orderBy('createdAt', 'desc'),
-    qlimit(n)
-  );
-  const snap = await getDocs(q);
+  const snap = await db
+    .collection(COLLECTIONS.products)
+    .where('sellerId', '==', uid)
+    .orderBy('createdAt', 'desc')
+    .limit(n)
+    .get();
   return snap.docs.map((d) => ({ id: d.id, ...toPlain(d.data()) }));
 }
 
 export async function changeProductPrice(productId, price) {
-  await updateDoc(doc(db, COLLECTIONS.products, productId), {
+  await db.collection(COLLECTIONS.products).doc(String(productId)).update({
     price: Number(price),
     updatedAt: serverTimestamp(),
   });
@@ -149,23 +134,23 @@ export async function changeProductPrice(productId, price) {
 
 /** Hide / show a listing (seller action). active ↔ hidden. */
 export async function changeProductStatus(productId, status) {
-  await updateDoc(doc(db, COLLECTIONS.products, productId), {
+  await db.collection(COLLECTIONS.products).doc(String(productId)).update({
     status,
     updatedAt: serverTimestamp(),
   });
 }
 
 export async function getGameById(gameId) {
-  const snap = await getDoc(doc(db, COLLECTIONS.games, gameId));
+  const snap = await db.collection(COLLECTIONS.games).doc(gameId).get();
   return snap.exists ? { id: snap.id, ...toPlain(snap.data()) } : null;
 }
 
 export async function listGames() {
-  const snap = await getDocs(db.collection(COLLECTIONS.games));
+  const snap = await db.collection(COLLECTIONS.games).get();
   return snap.docs.map((d) => ({ id: d.id, ...toPlain(d.data()) }));
 }
 
 export async function getProductById(productId) {
-  const snap = await getDoc(doc(db, COLLECTIONS.products, productId));
+  const snap = await db.collection(COLLECTIONS.products).doc(productId).get();
   return snap.exists ? { id: snap.id, ...toPlain(snap.data()) } : null;
 }

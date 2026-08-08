@@ -1,4 +1,3 @@
-import { query, where, orderBy, limit as qlimit, getDocs, getDoc, doc, setDoc, addDoc, updateDoc } from 'firebase-admin/firestore';
 import { db, serverTimestamp, COLLECTIONS } from '../db.js';
 import { toPlain } from './marketplace.js';
 
@@ -6,7 +5,7 @@ import { toPlain } from './marketplace.js';
 export const FAQ = [
   {
     id: 'escrow',
-    q: '💳 Сатып алу қалай қорғалады?',
+    title: '💳 Сатып алу қалай қорғалады?',
     a:
       'Saty эскроумен жұмыс істейді: сатып алушы ақшаны платформаға салады, ' +
       'сатушы аккаунтты берген соң сатып алушы «алдым» деп растайды — сонда ғана ' +
@@ -44,7 +43,7 @@ export const FAQ = [
     title: '✅ Верификация деген не?',
     a:
       'Телефон нөмірін растау — сату үшін міндетті. Бұл боттан басталады: ' +
-      'сайттағы «Телеграмға қосу» сілтемесінен кейін нөмірді бөлісесіз.',
+      'сайттағы «Телеграмға қосу» сілтемесіннен кейін нөмірді бөлісесіз.',
   },
 ];
 
@@ -53,7 +52,7 @@ export const faqById = (id) => FAQ.find((f) => f.id === id);
 // ── Real support tickets ─────────────────────────────────────────────────────
 /** Create a support ticket. Returns the new ticket id. */
 export async function createTicket({ userId, userName, userAvatar = '', subject }) {
-  const ref = await addDoc(db.collection(COLLECTIONS.tickets), {
+  const ref = await db.collection(COLLECTIONS.tickets).add({
     userId,
     userName,
     userAvatar,
@@ -72,29 +71,27 @@ export async function createTicket({ userId, userName, userAvatar = '', subject 
 }
 
 export async function myTickets(uid, n = 8) {
-  const q = query(
-    db.collection(COLLECTIONS.tickets),
-    where('userId', '==', uid),
-    orderBy('updatedAt', 'desc'),
-    qlimit(n)
-  );
-  const snap = await getDocs(q);
+  const snap = await db
+    .collection(COLLECTIONS.tickets)
+    .where('userId', '==', uid)
+    .orderBy('updatedAt', 'desc')
+    .limit(n)
+    .get();
   return snap.docs.map((d) => ({ id: d.id, ...toPlain(d.data()) }));
 }
 
 export async function ticketMessages(ticketId, n = 20) {
-  const q = query(
-    db.collection(COLLECTIONS.ticketMessages),
-    where('ticketId', '==', ticketId),
-    orderBy('createdAt', 'asc'),
-    qlimit(n)
-  );
-  const snap = await getDocs(q);
+  const snap = await db
+    .collection(COLLECTIONS.ticketMessages)
+    .where('ticketId', '==', ticketId)
+    .orderBy('createdAt', 'asc')
+    .limit(n)
+    .get();
   return snap.docs.map((d) => ({ id: d.id, ...toPlain(d.data()) }));
 }
 
 export async function sendTicketMessage(user, ticketId, text) {
-  await addDoc(db.collection(COLLECTIONS.ticketMessages), {
+  await db.collection(COLLECTIONS.ticketMessages).add({
     ticketId,
     senderId: user.uid ?? user.id ?? '',
     senderName: user.displayName ?? user.name ?? '—',
@@ -103,8 +100,8 @@ export async function sendTicketMessage(user, ticketId, text) {
     text,
     createdAt: serverTimestamp(),
   });
-  const ticketRef = doc(db, COLLECTIONS.tickets, ticketId);
-  const ticketSnap = await getDoc(ticketRef);
+  const ticketRef = db.collection(COLLECTIONS.tickets).doc(ticketId);
+  const ticketSnap = await ticketRef.get();
   if (!ticketSnap.exists) return;
   const t = ticketSnap.data();
   const updates = {
@@ -115,10 +112,10 @@ export async function sendTicketMessage(user, ticketId, text) {
     unreadAdmin: (t.unreadAdmin ?? 0) + 1,
   };
   if (t.status === 'closed') updates.status = 'open';
-  await updateDoc(ticketRef, updates);
+  await ticketRef.update(updates);
 }
 
 export async function getTicketById(ticketId) {
-  const snap = await getDoc(doc(db, COLLECTIONS.tickets, ticketId));
+  const snap = await db.collection(COLLECTIONS.tickets).doc(ticketId).get();
   return snap.exists ? { id: snap.id, ...toPlain(snap.data()) } : null;
 }

@@ -1,4 +1,3 @@
-import { query, orderBy, limit as qlimit, getDocs } from 'firebase-admin/firestore';
 import { db, COLLECTIONS, getAllLinks } from '../db.js';
 import { toPlain } from './marketplace.js';
 
@@ -47,8 +46,8 @@ async function pollOnce() {
   const links = await getAllLinks();
   if (!links.size) return;
 
-  const q = query(db.collection(COLLECTIONS.notifications), orderBy('createdAt', 'desc'), qlimit(60));
-  const snap = await getDocs(q);
+  const q = db.collection(COLLECTIONS.notifications).orderBy('createdAt', 'desc').limit(60);
+  const snap = await q.get();
   if (snap.empty) return;
 
   const out = [];
