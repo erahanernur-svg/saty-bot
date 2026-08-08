@@ -90,7 +90,12 @@ async function requireUser(ctx) {
 }
 
 async function showMenu(ctx, head = '🏠 <b>Бас мәзір:</b>') {
-  await ctx.reply(head, { parse_mode: 'HTML' }, mainMenu());
+  await ctx.reply(head, { parse_mode: 'HTML', reply_markup: mainMenu().reply_markup });
+}
+
+/** Merge parse-mode options + a Markup keyboard into one `extra` object (telegraf reply drops the 3rd arg). */
+function withKB(markup, opts = {}) {
+  return { reply_markup: markup?.reply_markup, ...opts };
 }
 
 // ── Commands ───────────────────────────────────────────────────────────────────
@@ -156,8 +161,10 @@ bot.command('start', async (ctx) => {
     `✅ <b>Аккаунт сәтті байланысты!</b>\n\n` +
       `👤 ${esc(name)}\n🆔 <code>${esc(siteUserId)}</code>\n\n` +
       `Аккаунт сату үшін телефон нөмірін растау қажет. Төмендегі батырманы басыңыз:`,
-    { parse_mode: 'HTML' },
-    Markup.keyboard([Markup.button.contactRequest('📱 Телефон нөмірін бөлісу')]).resize().oneTime()
+    {
+      parse_mode: 'HTML',
+      ...Markup.keyboard([Markup.button.contactRequest('📱 Телефон нөмірін бөлісу')]).resize().oneTime(),
+    }
   );
 });
 
@@ -192,7 +199,7 @@ async function showProfileCtx(ctx, user) {
         : ''),
     {
       parse_mode: 'HTML',
-      reply_markup: mainMenu(),
+      reply_markup: mainMenu().reply_markup,
     }
   );
 }
@@ -228,14 +235,16 @@ bot.action(/^menu:(.+)$/, async (ctx) => {
 async function showOrdersIndex(ctx) {
   await ctx.reply(
     '📦 <b>Менің заказдарым</b>\n\nТаңдаңыз:',
-    { parse_mode: 'HTML' },
-    Markup.inlineKeyboard([
-      [
-        Markup.button.callback('🛒 Сатыпап алған', 'orders:buy'),
-        Markup.button.callback('💼 Сатқандық', 'orders:sell'),
-      ],
-      [Markup.button.callback('‹ Бас мәзір', 'menu')],
-    ])
+    withKB(
+      Markup.inlineKeyboard([
+        [
+          Markup.button.callback('🛒 Сатып алған', 'orders:buy'),
+          Markup.button.callback('💼 Сатқандық', 'orders:sell'),
+        ],
+        [Markup.button.callback('‹ Бас мәзір', 'menu')],
+      ]),
+      { parse_mode: 'HTML' }
+    )
   );
 }
 
@@ -266,8 +275,9 @@ bot.action(/^orders:(buy|sell)(?::p:(\d+))?$/, async (ctx) => {
   if (row.length) kb.push(row);
   kb.push([Markup.button.callback('‹ Бас мәзір', 'menu')]);
 
-  await ctx.editMessageText(`${head}\n${lines.join('\n')}`, { parse_mode: 'HTML' }, Markup.inlineKeyboard(kb)).catch(() =>
-    ctx.reply(`${head}\n${lines.join('\n')}`, { parse_mode: 'HTML' }, Markup.inlineKeyboard(kb))
+  const mb = Markup.inlineKeyboard(kb);
+  await ctx.editMessageText(`${head}\n${lines.join('\n')}`, withKB(mb, { parse_mode: 'HTML' })).catch(() =>
+    ctx.reply(`${head}\n${lines.join('\n')}`, withKB(mb, { parse_mode: 'HTML' }))
   );
 });
 
@@ -298,8 +308,7 @@ bot.action(/^ord:(.+)$/, async (ctx) => {
       `👤 ${isSeller ? 'Сатып алушы' : 'Сатушы'}: ${esc(isSeller ? order.buyerName : order.sellerName)}\n` +
       `🕐 ${fmtDate(order.createdAt)}\n` +
       `🆔 <code>${esc(order.id)}</code>`,
-    { parse_mode: 'HTML' },
-    Markup.inlineKeyboard(kb)
+    withKB(Markup.inlineKeyboard(kb), { parse_mode: 'HTML' })
   );
 });
 
@@ -358,15 +367,14 @@ async function showMyProducts(ctx) {
   const products = await market.getSellerProducts_(String(uid), 15);
   if (!products.length)
     return ctx.reply(
-      '🏷️ Лоттар табылмады. Сайттағы «Сату» бөлімінде лот жасаўыз.',
-      { parse_mode: 'HTML' },
-      Markup.inlineKeyboard([[Markup.button.callback('‹ Бас мәзір', 'menu')]])
+      '🏷️ Лоттар табылмады. Сайттағы «Сату» бөлімінде лот жасаңыз.',
+      withKB(Markup.inlineKeyboard([[Markup.button.callback('‹ Бас мәзір', 'menu')]]), { parse_mode: 'HTML' })
     );
 
   const lines = products.map((p, i) => `${i + 1}. ${PRODUCT_STATUS[p.status] || ''} · <b>${esc(p.title)}</b> — ${fmtPrice(p.price)}`);
   const kb = products.map((p) => [Markup.button.callback(`${esc(p.title).slice(0, 30)} — ${fmtPrice(p.price)}`, `prod:${p.id}`)]);
   kb.push([Markup.button.callback('⬅ Бас мәзір', 'menu')]);
-  await ctx.reply(`🏷️ <b>Менің лоттарым</b>\n\n${lines.join('\n')}`, { parse_mode: 'HTML' }, Markup.inlineKeyboard(kb));
+  await ctx.reply(`🏷️ <b>Менің лоттарым</b>\n\n${lines.join('\n')}`, withKB(Markup.inlineKeyboard(kb), { parse_mode: 'HTML' }));
 }
 
 bot.action(/^prod:(.+)$/, async (ctx) => {
@@ -395,8 +403,7 @@ bot.action(/^prod:(.+)$/, async (ctx) => {
       `💰 Баға: <b>${fmtPrice(product.price)}</b>\n` +
       (attrs ? `\n📋 Сипаттама:\n${attrs}\n` : '') +
       `🕐 ${fmtDate(product.createdAt)}`,
-    { parse_mode: 'HTML' },
-    Markup.inlineKeyboard(kb)
+    withKB(Markup.inlineKeyboard(kb), { parse_mode: 'HTML' })
   );
 });
 
@@ -436,12 +443,14 @@ async function showWallet(ctx, user) {
       `🕘 Ұсталды: ${fmtPrice(pending)}\n` +
       `✅ Қол жетімді: ${fmtPrice(available)}\n` +
       `📈 Жалпы кіріс: ${fmtPrice(revenue)}\n\n` +
-      `<i>Комхиссия 5%.</i>`,
-    { parse_mode: 'HTML' },
-    Markup.inlineKeyboard([
-      [Markup.button.callback('🏦 Шақыру: ақша алсу', 'wallet:withdraw')],
-      [Markup.button.callback('⬅ Бас мәзір', 'menu')],
-    ])
+      `<i>Комиссия 5%.</i>`,
+    withKB(
+      Markup.inlineKeyboard([
+        [Markup.button.callback('🏦 Шақыру: ақша алу', 'wallet:withdraw')],
+        [Markup.button.callback('⬅ Бас мәзір', 'menu')],
+      ]),
+      { parse_mode: 'HTML' }
+    )
   );
 }
 
@@ -491,8 +500,7 @@ bot.on('text', async (ctx) => {
       flowClear(chatId);
       await ctx.reply(
         `✅ Баға өзгерді: <b>${fmtPrice(price)}</b>`,
-        { parse_mode: 'HTML' },
-        Markup.inlineKeyboard([[Markup.button.callback('‹ Менің лоттарым', 'menu:products')]])
+        withKB(Markup.inlineKeyboard([[Markup.button.callback('‹ Менің лоттарым', 'menu:products')]]), { parse_mode: 'HTML' })
       );
     } else if (state.step === 'withdraw_amount') {
       const amount = Number(text.replace(/[^\d]/g, ''));
@@ -501,10 +509,12 @@ bot.on('text', async (ctx) => {
       flowSet(chatId, 'withdraw_method', { amount });
       await ctx.reply(
         `🏦 Сома: <b>${fmtPrice(amount)}</b>\n\nШығаратын әдісті таңда:`,
-        { parse_mode: 'HTML' },
-        Markup.inlineKeyboard([
-          [Markup.button.callback('☕ Kaspi Gold', 'withdraw:method:kaspi'), Markup.button.callback('💳 Банк картасы', 'withdraw:method:card')],
-        ])
+        withKB(
+          Markup.inlineKeyboard([
+            [Markup.button.callback('☕ Kaspi Gold', 'withdraw:method:kaspi'), Markup.button.callback('💳 Банк картасы', 'withdraw:method:card')],
+          ]),
+          { parse_mode: 'HTML' }
+        )
       );
     } else if (state.step === 'withdraw_kaspi') {
       if (!/^\+?[\d\s-]{9,}$/.test(text)) return ctx.reply('⚠️ Дұрыс нөмір енгізіңіз.');
@@ -543,13 +553,15 @@ async function showSupport(ctx) {
   if (!user) return;
   await ctx.reply(
     '🎧 <b>Қолдау</b>\n\nНе істеу керек?',
-    { parse_mode: 'HTML' },
-    Markup.inlineKeyboard([
-      [Markup.button.callback('🆕 Жаңа тикет', 'sup:new')],
-      [Markup.button.callback('📋 Менің тикеттерім', 'sup:list')],
-      [Markup.button.callback('❓ FAQ', 'sup:faq')],
-      [Markup.button.callback('⬅ Бас мәзір', 'menu')],
-    ])
+    withKB(
+      Markup.inlineKeyboard([
+        [Markup.button.callback('🆕 Жаңа тикет', 'sup:new')],
+        [Markup.button.callback('📋 Менің тикеттерім', 'sup:list')],
+        [Markup.button.callback('❓ FAQ', 'sup:faq')],
+        [Markup.button.callback('⬅ Бас мәзір', 'menu')],
+      ]),
+      { parse_mode: 'HTML' }
+    )
   );
 }
 
@@ -559,12 +571,12 @@ bot.action(/^sup:(new|list|faq)$/, async (ctx) => {
   const user = await requireUser(ctx);
   if (!user) return;
   if (what === 'faq') {
-    const kb = support.FAQ.map((f) => [Markup.button.callback(f.q, `faq:${f.id}`)]);
+    const kb = support.FAQ.map((f) => [Markup.button.callback(f.title || f.q, `faq:${f.id}`)]);
     kb.push([Markup.button.callback('⬅ Қолдау', 'menu:support')]);
-    await ctx.reply('❓ <b>Жиі қойылатын сұрақтар</b>', { parse_mode: 'HTML' }, Markup.inlineKeyboard(kb));
+    await ctx.reply('❓ <b>Жиі қойылатын сұрақтар</b>', withKB(Markup.inlineKeyboard(kb), { parse_mode: 'HTML' }));
   } else if (what === 'list') {
     const tickets = await support.myTickets(String(user.uid));
-if (!tickets.length)
+    if (!tickets.length)
       return ctx.reply('Тикет табылмады. 🆕 Жаңа тикет ашып көріңіз.', {
         parse_mode: 'HTML',
         reply_markup: Markup.inlineKeyboard([
@@ -573,7 +585,7 @@ if (!tickets.length)
       });
     const kb = tickets.map((t) => [Markup.button.callback(`${t.status === 'closed' ? '🔒' : '🎫'} ${esc(t.subject || t.id)}`, `ticket:${t.id}`)]);
     kb.push([Markup.button.callback('⬅ Қолдау', 'menu:support')]);
-    await ctx.reply(`📋 <b>Менің тикеттерім</b>`, { parse_mode: 'HTML' }, Markup.inlineKeyboard(kb));
+    await ctx.reply(`📋 <b>Менің тикеттерім</b>`, withKB(Markup.inlineKeyboard(kb), { parse_mode: 'HTML' }));
   } else if (what === 'new') {
     flowSet(chatIdOf(ctx), 'ticket_subject');
     await ctx.reply(`🆕 <b>Жаңа тикет</b>\n\nМәселенің тақырыбын жазыңыз:`, { parse_mode: 'HTML' });
@@ -584,7 +596,9 @@ bot.action(/^faq:(.+)$/, async (ctx) => {
   await ctx.answerCbQuery();
   const f = support.FAQ.find((x) => x.id === ctx.match[1]);
   if (!f) return;
-  await ctx.reply(`❓ <b>${esc(f.q)}</b>\n\n${esc(f.a)}`, { parse_mode: 'HTML' }, Markup.inlineKeyboard([[Markup.button.callback('‹ FAQ', 'sup:faq')]]));
+  const title = f.title || f.q;
+  const answer = f.a || '';
+  await ctx.reply(`❓ <b>${esc(title)}</b>\n\n${esc(answer)}`, withKB(Markup.inlineKeyboard([[Markup.button.callback('‹ FAQ', 'sup:faq')]]), { parse_mode: 'HTML' }));
 });
 
 bot.action(/^ticket:mon(.+)$/, async (ctx) => { return null; }); // not used
@@ -605,8 +619,7 @@ bot.action(/^ticket:(.+)$/, async (ctx) => {
     `📎 <b>${esc(ticket.subject)}</b>\n\n` +
       `Статус: <b>${ticket.status === 'open' ? '🟢 ашық' : ticket.status === 'pending' ? '🟡 қарауда' : '🔴 жабылды'}</b>\n\n` +
       `${history || '🕳️ Әзірге хабарламалар жоқ.'}`,
-    { parse_mode: 'HTML' },
-    Markup.inlineKeyboard(kb)
+    withKB(Markup.inlineKeyboard(kb), { parse_mode: 'HTML' })
   );
 });
 
@@ -620,15 +633,14 @@ bot.action(/^ticket:reply:(.+)$/, async (ctx) => {
 });
 
 async function showRules(ctx) {
-  await ctx.reply(
+await ctx.reply(
     '📖 <b>Правила Saty</b>\n\n' +
       '1️⃣ Эскроу: сатып алушы ақыны платформаға салады, сатып растайды.\n' +
       '2️⃣ Сату: лот жариялап, модерациядан (24сағ) өтесіз.\n' +
       '3️⃣ Комиссия: 5%.\n' +
-      '4️⃣ Қауіпсіздік: тек платформаға салып ф шот?.\n\n' +
+      '4️⃣ Қауіпсіздік: тек платформаның ішінде сауда жасаңыз.\n\n' +
       '<i>Толық ереже — сайт «Правила» бөлімінде.</i>',
-    { parse_mode: 'HTML' },
-    Markup.inlineKeyboard([[Markup.button.callback('⬅ Бас мәзір', 'menu')]])
+    withKB(Markup.inlineKeyboard([[Markup.button.callback('⬅ Бас мәзір', 'menu')]]), { parse_mode: 'HTML' })
   );
 }
 
@@ -641,13 +653,15 @@ async function showSettings(ctx) {
     `⚙️ <b>Хабарландырулар</b>\n\n` +
       `Телеграмда қабылдау: ${enabled ? '🟢 қосылған' : '⛔ өшірілген'}\n\n` +
       `<i>Хабарландыру: жаңа заказ, статус, тикет.</i>`,
-    { parse_mode: 'HTML' },
-    Markup.inlineKeyboard([
-      [
-        Markup.button.callback(enabled ? '⛔ Өшіру' : '✅ Қосу', 'notif:toggle'),
-        Markup.button.callback('⬅ Мәзір', 'menu'),
-      ],
-    ])
+    withKB(
+      Markup.inlineKeyboard([
+        [
+          Markup.button.callback(enabled ? '⛔ Өшіру' : '✅ Қосу', 'notif:toggle'),
+          Markup.button.callback('⬅ Мәзір', 'menu'),
+        ],
+      ]),
+      { parse_mode: 'HTML' }
+    )
   );
 }
 
