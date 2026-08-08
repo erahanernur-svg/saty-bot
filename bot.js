@@ -48,6 +48,15 @@ const WEBHOOK_URL = (process.env.WEBHOOK_URL || '')
   .trim()
   .replace(/\/webhook\/?$/i, '')
   .replace(/\/+$/, '');
+
+// Safeguard: never let the webhook be re-registered to a stale/old host.
+// Render can keep legacy env vars; force the correct public URL instead.
+const PUBLIC_URL = (() => {
+  if (process.env.BOT_PUBLIC_URL) return process.env.BOT_PUBLIC_URL.trim().replace(/\/+$/, '');
+  let u = WEBHOOK_URL;
+  if (u && !/saty-bot\.onrender\.com/i.test(u)) u = 'https://saty-bot.onrender.com'; // legacy host fix
+  return u;
+})();
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
 
 // ── Tiny flow state machine (waiting for a plain-text reply) ─────────────────
@@ -636,7 +645,7 @@ bot.action('notif:toggle', async (ctx) => {
 bot.on('contact', async (ctx) => {
   try {
     const contact = ctx.message.contact;
-    const chatId = String(ctx.chat.id);
+    const chatId = chatIdOf(ctx);
     if (!contact?.phone_number) return ctx.reply('Телефон нөмірі алынбады. Қайта көріңіз.');
     const linkSnap = await db.collection('telegram_links').doc(chatId).get();
     if (!linkSnap.exists)
@@ -654,7 +663,7 @@ bot.on('contact', async (ctx) => {
       { merge: true }
     );
     await ctx.reply('✅ <b>Телефон нөмірі сәтті расталды!</b>', { parse_mode: 'HTML' });
-    await showMenu(ctx, '🎉 <b>Енді бас мәзірді пайдаланыңыз:</b>');
+    await showMenu(ctx, '🎉 <b>Бас мәзір:</b>');
   } catch (err) {
     console.error('contact handler error:', err);
     await ctx.reply('Қате орын алды. Қайта көріңіз.').catch(() => {});
@@ -676,7 +685,7 @@ const server = createServer((req, res) => {
     res.end('ok');
     return;
   }
-  if (WEBHOOK_URL && req.url === '/webhook' && req.method === 'POST') {
+  if (PUBLIC_URL && req.url === '/webhook' && req.method === 'POST') {
     bot.webhookCallback('/webhook')(req, res);
     return;
   }
@@ -690,8 +699,8 @@ async function start() {
   notify.stopRelay();
   notify.startRelay(bot);
 
-  if (WEBHOOK_URL) {
-    const webhookUrl = `${WEBHOOK_URL}/webhook`;
+  if (PUBLIC_URL) {
+    const webhookUrl = `${PUBLIC_URL}/webhook`;
     await bot.telegram.setWebhook(webhookUrl, { secret_token: WEBHOOK_SECRET || undefined, drop_pending_updates: true });
     console.log(`Telegram webhook registered → ${webhookUrl}`);
     return;
