@@ -1,0 +1,19 @@
+{
+  "name": "@workspace/telegram-bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Saty marketplace Telegram bot — verifies sellers via phone number and links Telegram to site accounts.",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node bot.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "firebase-admin": "^13.0.1",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

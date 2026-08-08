@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Environment & secrets — NEVER commit these
+.env
+.env.local
+
+# Firebase service account key — NEVER commit this
+serviceAccountKey.json
+*.service-account.json
+google-credentials.json
+GOOGLE_APPLICATION_CREDENTIALS
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
