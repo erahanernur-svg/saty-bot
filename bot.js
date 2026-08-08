@@ -94,6 +94,17 @@ async function showMenu(ctx, head = '🏠 <b>Бас мәзір:</b>') {
 }
 
 // ── Commands ───────────────────────────────────────────────────────────────────
+bot.use((ctx, next) => {
+  const u = ctx.update;
+  if (u) {
+    const who = ctx.from?.id ?? '?';
+    const kind = u.message ? 'message' : u.callback_query ? 'callback' : 'update';
+    const head = u.message?.text ? `「${u.message.text.slice(0, 40)}」` : u.callback_query?.data ? `cb:${u.callback_query.data}` : '';
+    console.log(`[update] ${kind} from ${who} ${head}`);
+  }
+  return next();
+});
+
 bot.command('start', async (ctx) => {
   const chatId = chatIdOf(ctx);
   const text = ctx.message?.text ?? '';
