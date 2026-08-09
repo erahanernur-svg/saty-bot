@@ -51,7 +51,7 @@ export async function uploadToR2({ buffer, name = '', contentType = '' }) {
     return ext;
   })();
 
-  const key = `uploads/${new Date().toISOString().slice(0, 10)}/${randomUUID()}.${ext}`;
+  const key = `uploads/${new Date().toISOString().slice(0, 10)}/${randomUUID()}.${safeExt}`;
 
   await clientInstance.send(
     new PutObjectCommand({
