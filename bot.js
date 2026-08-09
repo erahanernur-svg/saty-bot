@@ -881,11 +881,16 @@ async function handleUpload(req, res) {
   // headers cannot carry non-ISO-8859-1 characters (breaks browser fetch).
   let name = '';
   let caption = '';
+  let diag = false;
   try {
-    const q = new URL(req.url, 'http://local').searchParams;
+    const params = new URL(req.url, 'http://local');
+    const q = params.searchParams;
     name = String(q.get('name') || '').slice(0, 255);
     caption = String(q.get('caption') || '').slice(0, 1024);
+    diag = q.get('diag') === '1';
   } catch {}
+  const timings = { read_ms: 0, r2_ms: 0, tg_ms: 0 };
+  const tStart = Date.now();
 
   let buffer;
   try {
@@ -893,6 +898,7 @@ async function handleUpload(req, res) {
   } catch (err) {
     return sendJson({ ok: false, error: err.name === 'FileTooLarge' ? 'file_too_large' : 'read_failed' });
   }
+  timings.read_ms = Date.now() - tStart;
   if (!buffer.length) {
     return sendJson({ ok: false, error: 'empty_body' });
   }
@@ -910,6 +916,7 @@ async function handleUpload(req, res) {
     // Diagnostic: AWS SDK errors leak no credentials (bucket/endpoint hints only).
     return sendJson({ ok: false, error: 'r2_put_failed', detail: String(err?.message ?? err).slice(0, 300) });
   }
+  timings.r2_ms = Date.now() - tStart - timings.read_ms;
   console.log(`[upload] stored → ${uploaded.key}`);
 
   // Backup copy to Telegram (best-effort; never breaks the site).
@@ -927,8 +934,11 @@ async function handleUpload(req, res) {
       console.warn(`[upload] telegram backup failed:`, err.message);
     }
   }
+  timings.tg_ms = Date.now() - tStart - timings.read_ms - timings.r2_ms;
 
-  return sendJson({ ok: true, url: uploaded.url, key: uploaded.key });
+  return sendJson(diag
+    ? { ok: true, url: uploaded.url, key: uploaded.key, diag_timings: timings }
+    : { ok: true, url: uploaded.url, key: uploaded.key });
 }
 
 /**
