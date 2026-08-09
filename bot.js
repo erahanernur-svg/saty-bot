@@ -892,7 +892,14 @@ async function handleUpload(req, res) {
     return sendJson({ ok: false, error: 'storage_not_configured' }, 503);
   }
 
-  const uploaded = await uploadToR2({ buffer, name, contentType });
+  let uploaded;
+  try {
+    uploaded = await uploadToR2({ buffer, name, contentType });
+  } catch (err) {
+    console.error('[upload] R2 put failed:', err?.name, err?.message);
+    // Diagnostic: AWS SDK errors leak no credentials (bucket/endpoint hints only).
+    return sendJson({ ok: false, error: 'r2_put_failed', detail: String(err?.message ?? err).slice(0, 300) });
+  }
   console.log(`[upload] stored → ${uploaded.key}`);
 
   // Backup copy to Telegram (best-effort; never breaks the site).
