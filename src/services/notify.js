@@ -5,8 +5,10 @@ import { toPlain } from './marketplace.js';
  * Real-time notification relay.
  *
  * Runs on a timer and pushes new Firestore events (orders, messages, support
- * replies, reviews, follows) to the linked Telegram chat. Uses Firestore
- * `createdAt` as a cursor so nothing is sent twice.
+ * replies, reviews, follows) to the recipient's devices over FCM and, when
+ * linked, to the Telegram chat. Uses Firestore `createdAt` as a cursor so
+ * nothing is sent twice; the cursor is persisted between restarts so events
+ * that occurred while the process was down are still delivered.
  */
 
 const TYPE_EMOJI = {
@@ -17,21 +19,42 @@ const TYPE_EMOJI = {
   system: '🔔',
 };
 
+// Where the watermark is persisted (Firestore doc, so it survives restarts).
+const CURSOR_DOC = 'relay_state';
+const CURSOR_FIELD = 'cursorMs';
+
 let botInstance = null;
 let timer = null;
-let cursor = 0; // last processed createdAt (ms) — in-memory watermark
+let cursor = 0; // last processed createdAt (ms) — persisted watermark
 let notifIdSet = new Set(); // ids seen in this process
 
-export function startRelay(bot, { intervalMs = 15000 } = {}) {
+async function loadCursor() {
+  try {
+    const doc = await db.collection('system').doc(CURSOR_DOC).get();
+    if (doc.exists && typeof doc.data()?.cursorMs === 'number') {
+      return doc.data().cursorMs;
+    }
+  } catch {}
+  return Date.now();
+}
+
+async function persistCursor(ms) {
+  try {
+    await db.collection('system').doc(CURSOR_DOC).set({ cursorMs: ms, updatedAt: new Date() }, { merge: true });
+  } catch {}
+}
+
+export async function startRelay(bot, { intervalMs = 5000 } = {}) {
   botInstance = bot;
-  // Start from the current time so we never replay old history.
-  cursor = Date.now();
+  // Resume from the persisted watermark; fall back to "now" on first run so we
+  // never replay months of history.
+  cursor = await loadCursor();
   stopRelay();
   timer = setInterval(() => {
     pollOnce().catch((err) => console.warn('[relay] poll error:', err.message));
   }, intervalMs);
   timer.unref?.();
-  console.log('[relay] notification relay started.');
+  console.log(`[relay] notification relay started (interval ${intervalMs}ms, cursor from storage).`);
   return stopRelay;
 }
 
@@ -47,7 +70,7 @@ async function pollOnce() {
   // linked Telegram chat — FCM pushes don't depend on the bot link.
   const links = await getAllLinks();
 
-  const q = db.collection(COLLECTIONS.notifications).orderBy('createdAt', 'desc').limit(60);
+  const q = db.collection(COLLECTIONS.notifications).orderBy('createdAt', 'desc').limit(200);
   const snap = await q.get();
   if (snap.empty) return;
 
@@ -99,12 +122,16 @@ async function pollOnce() {
     }
   }
 
-  // Advance the watermark past the newest doc we processed.
+  // Advance the watermark past the newest doc we processed — and persist it so
+  // a restart (or Render sleeping) never loses events in the gap.
   if (snap.docs.length) {
     const latest = snap.docs[0].data().createdAt;
     if (latest && typeof latest.toDate === 'function') {
       const ms = latest.toDate().getTime();
-      if (ms > cursor) cursor = ms;
+      if (ms > cursor) {
+        cursor = ms;
+        persistCursor(ms).catch(() => {});
+      }
     }
   }
 }
@@ -121,13 +148,30 @@ async function pushToUser(userId, { title, body, type, link, notifId }) {
 
   const message = {
     data: { type, link, notifId, title, body },
+    android: {
+      priority: 'high',
+      notification: {
+        channelId: 'saty_messages',
+        notificationPriority: 'high',
+        sound: 'default',
+        color: '#6366f1',
+      },
+    },
   };
 
   try {
     const resp = await messaging.sendEachForMulticast({
       tokens,
       notification: { title, body },
-      android: { priority: 'high' },
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'saty_messages',
+          notificationPriority: 'high',
+          sound: 'default',
+          color: '#6366f1',
+        },
+      },
       data: message.data,
     });
 

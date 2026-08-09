@@ -1,0 +1,16 @@
+name: keep-alive
+
+# Render free instances sleep after ~15 min without traffic, which stalls the
+# FCM notification relay. Ping /health every 4 minutes so pushes arrive
+# immediately even when the app is fully closed.
+on:
+  schedule:
+    - cron: '*/4 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render health endpoint
+        run: curl -fsS --max-time 30 https://saty-bot.onrender.com/health || true
