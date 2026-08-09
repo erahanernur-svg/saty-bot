@@ -791,7 +791,7 @@ const server = createServer((req, res) => {
   // CORS for /api/* endpoints called by the web app from a browser origin.
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-File-Name, X-Caption');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
