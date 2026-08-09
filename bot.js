@@ -37,7 +37,7 @@ import * as settings from './src/services/settings.js';
 import { ORDER_STATUS, PRODUCT_STATUS, fmtPrice, fmtDate, esc, mainMenu } from './src/format.js';
 import { r2Configured, uploadToR2 } from './src/storage.js';
 
-const VERSION = 'v1.7.0'; // shown by /health to verify deployed code
+const VERSION = 'v1.7.2'; // shown by /health to verify deployed code
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
   console.error('TELEGRAM_BOT_TOKEN is not set. Create a .env file (see .env.example) or set the env var on your host.');
@@ -919,22 +919,19 @@ async function handleUpload(req, res) {
   timings.r2_ms = Date.now() - tStart - timings.read_ms;
   console.log(`[upload] stored → ${uploaded.key}`);
 
-  // Backup copy to Telegram (best-effort; never breaks the site).
+  // Backup copy to Telegram (best-effort; never breaks the site). Not awaited:
+  // a slow/hanging Telegram call must never delay the upload response.
   if (BACKUP_CHANNEL) {
-    try {
-      await bot.telegram.sendPhoto(BACKUP_CHANNEL, {
-        source: Buffer.from(buffer),
-        filename: name || `backup_${Date.now()}.jpg`,
-      }, {
+    const filename = name || `backup_${Date.now()}.jpg`;
+    bot.telegram
+      .sendPhoto(BACKUP_CHANNEL, { source: Buffer.from(buffer), filename }, {
         caption: caption ? escapeHtml(caption) : undefined,
         parse_mode: caption ? 'HTML' : undefined,
-      });
-      console.log(`[upload] backup photo → ${BACKUP_CHANNEL}`);
-    } catch (err) {
-      console.warn(`[upload] telegram backup failed:`, err.message);
-    }
+      })
+      .then(() => console.log(`[upload] backup photo → ${BACKUP_CHANNEL}`))
+      .catch((err) => console.warn(`[upload] telegram backup failed:`, err.message));
   }
-  timings.tg_ms = Date.now() - tStart - timings.read_ms - timings.r2_ms;
+  timings.tg_ms = 0; // fire-and-forget; never awaited
 
   return sendJson(diag
     ? { ok: true, url: uploaded.url, key: uploaded.key, diag_timings: timings }
