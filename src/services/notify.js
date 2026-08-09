@@ -19,6 +19,17 @@ let botInstance = null;
 let timer = null;
 let cursor = 0; // last processed createdAt (ms) — persisted watermark
 let notifIdSet = new Set(); // ids seen in this process
+let linksCache = new Map();
+let linksCacheAt = 0;
+
+async function getLinksCached() {
+  const now = Date.now();
+  if (now - linksCacheAt > 30000) {
+    linksCache = await getAllLinks();
+    linksCacheAt = now;
+  }
+  return linksCache;
+}
 
 async function loadCursor() {
   try {
@@ -60,9 +71,17 @@ export function stopRelay() {
 async function pollOnce() {
   // Notification relay is user-scoped, so it must run even if nobody has a
   // linked Telegram chat — FCM pushes don't depend on the bot link.
-  const links = await getAllLinks();
+  const links = await getLinksCached();
 
-  const q = db.collection(COLLECTIONS.notifications).orderBy('createdAt', 'desc').limit(200);
+  // Only fetch docs NEWER than the watermark. A plain orderBy+limit query
+  // would re-read the same 200 newest docs every 5 s (≈2.4M reads/day) and
+  // instantly exhaust the Firestore free quota — which kills the relay.
+  const since = new Date(cursor - 60000); // 60s overlap for clock skew
+  const q = db
+    .collection(COLLECTIONS.notifications)
+    .where('createdAt', '>', since)
+    .orderBy('createdAt', 'asc')
+    .limit(200);
   const snap = await q.get();
   if (snap.empty) return;
 
@@ -117,7 +136,7 @@ async function pollOnce() {
   // Advance the watermark past the newest doc we processed — and persist it so
   // a restart (or Render sleeping) never loses events in the gap.
   if (snap.docs.length) {
-    const latest = snap.docs[0].data().createdAt;
+    const latest = snap.docs[snap.docs.length - 1].data().createdAt;
     if (latest && typeof latest.toDate === 'function') {
       const ms = latest.toDate().getTime();
       if (ms > cursor) {

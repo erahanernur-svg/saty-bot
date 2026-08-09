@@ -5,7 +5,7 @@ name: keep-alive
 # immediately even when the app is fully closed.
 on:
   schedule:
-    - cron: '*/4 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
