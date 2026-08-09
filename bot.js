@@ -793,21 +793,23 @@ const server = createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-File-Name, X-Caption');
 
+  const pathname = req.url?.split('?')[0] ?? req.url ?? '';
+
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
     return;
   }
-  if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
+  if (req.method === 'GET' && (pathname === '/' || pathname === '/health')) {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end(`ok ${VERSION}`);
     return;
   }
-  if (PUBLIC_URL && req.url === '/webhook' && req.method === 'POST') {
+  if (PUBLIC_URL && pathname === '/webhook' && req.method === 'POST') {
     bot.webhookCallback('/webhook')(req, res);
     return;
   }
-  if (req.url === '/api/upload' && req.method === 'POST') {
+  if (pathname === '/api/upload' && req.method === 'POST') {
     handleUpload(req, res).catch((err) => {
       console.error('[upload] error:', err?.message || err);
       if (!res.headersSent) {
@@ -817,7 +819,7 @@ const server = createServer((req, res) => {
     });
     return;
   }
-  if (req.url === '/api/image-backup' && req.method === 'POST') {
+  if (pathname === '/api/image-backup' && req.method === 'POST') {
     handleImageBackup(req, res).catch((err) => {
       console.warn('[backup] handler error:', err.message);
       if (!res.headersSent) {
