@@ -36,6 +36,7 @@ import * as notify from './src/services/notify.js';
 import * as settings from './src/services/settings.js';
 import { ORDER_STATUS, PRODUCT_STATUS, fmtPrice, fmtDate, esc, mainMenu } from './src/format.js';
 
+const VERSION = 'v1.4.0'; // shown by /health to verify deployed code
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
   console.error('TELEGRAM_BOT_TOKEN is not set. Create a .env file (see .env.example) or set the env var on your host.');
@@ -776,7 +777,7 @@ function normalizePhone(raw) {
 const server = createServer((req, res) => {
   if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('ok');
+    res.end(`ok ${VERSION}`);
     return;
   }
   if (PUBLIC_URL && req.url === '/webhook' && req.method === 'POST') {

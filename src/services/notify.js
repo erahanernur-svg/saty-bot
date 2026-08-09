@@ -152,7 +152,7 @@ async function pushToUser(userId, { title, body, type, link, notifId }) {
       priority: 'high',
       notification: {
         channelId: 'saty_messages',
-        notificationPriority: 'high',
+        notificationPriority: 'PRIORITY_HIGH',
         sound: 'default',
         color: '#6366f1',
       },
@@ -167,13 +167,17 @@ async function pushToUser(userId, { title, body, type, link, notifId }) {
         priority: 'high',
         notification: {
           channelId: 'saty_messages',
-          notificationPriority: 'high',
+          notificationPriority: 'PRIORITY_HIGH',
           sound: 'default',
           color: '#6366f1',
         },
       },
       data: message.data,
     });
+
+    console.log(
+      `[relay] FCM ok: ${resp.successCount} delivered, ${resp.failureCount} failed (${tokens.length} token(s) for ${userId})`
+    );
 
     if (resp.failureCount > 0) {
       const dead = [];
