@@ -874,8 +874,16 @@ async function handleUpload(req, res) {
   };
 
   const contentType = req.headers['content-type'] || 'image/jpeg';
-  const name = String(req.headers['x-file-name'] || '').slice(0, 255);
-  const caption = String(req.headers['x-caption'] || '').slice(0, 1024);
+
+  // File name + caption arrive as UTF-8 query params (URL-encoded) because HTTP
+  // headers cannot carry non-ISO-8859-1 characters (breaks browser fetch).
+  let name = '';
+  let caption = '';
+  try {
+    const q = new URL(req.url, 'http://local').searchParams;
+    name = String(q.get('name') || '').slice(0, 255);
+    caption = String(q.get('caption') || '').slice(0, 1024);
+  } catch {}
 
   let buffer;
   try {
