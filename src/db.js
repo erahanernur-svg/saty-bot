@@ -32,8 +32,12 @@ if (!admin.apps.length) {
 }
 
 export const db = admin.firestore();
+export const messaging = admin.messaging();
 export const serverTimestamp = () => admin.firestore.FieldValue.serverTimestamp();
 export const increment = (n = 1) => admin.firestore.FieldValue.increment(n);
+export const arrayUnion = (...els) => admin.firestore.FieldValue.arrayUnion(...els);
+export const arrayRemove = (...els) => admin.firestore.FieldValue.arrayRemove(...els);
+export const adminFirestore = admin.firestore;
 
 /** Resolve siteUserId for a Telegram chatId, or null if not linked. */
 export async function getLinkedUserId(chatId) {

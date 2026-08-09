@@ -1,4 +1,4 @@
-import { db, COLLECTIONS, getAllLinks } from '../db.js';
+import { db, COLLECTIONS, getAllLinks, getUser, messaging, arrayRemove } from '../db.js';
 import { toPlain } from './marketplace.js';
 
 /**
@@ -43,8 +43,9 @@ export function stopRelay() {
 }
 
 async function pollOnce() {
+  // Notification relay is user-scoped, so it must run even if nobody has a
+  // linked Telegram chat — FCM pushes don't depend on the bot link.
   const links = await getAllLinks();
-  if (!links.size) return;
 
   const q = db.collection(COLLECTIONS.notifications).orderBy('createdAt', 'desc').limit(60);
   const snap = await q.get();
@@ -58,8 +59,23 @@ async function pollOnce() {
     if (!rec.createdAt) continue;
     if (rec.createdAt.getTime() < cursor - 60000) continue; // skip everything before watermark
     if (notifIdSet.has(rec.id)) continue;
+    if (rec.userId === rec.fromUserId) continue; // self-events only
+    out.push(rec);
+  }
 
-    // Find a chat for this user.
+  for (const rec of out) {
+    notifIdSet.add(rec.id);
+
+    // 1) FCM push to the recipient's registered devices (native APK).
+    await pushToUser(rec.userId, {
+      title: rec.title || 'Saty',
+      body: rec.body || '',
+      type: rec.type || '',
+      link: rec.link || '',
+      notifId: rec.id,
+    });
+
+    // 2) Telegram relay (existing behaviour) to the user's linked chat.
     let targetChat = null;
     for (const [chatId, link] of links.entries()) {
       if (link.uid === rec.userId) {
@@ -68,12 +84,6 @@ async function pollOnce() {
       }
     }
     if (!targetChat) continue;
-    if (rec.userId === rec.fromUserId) continue; // self-events only
-    out.push({ chatId: targetChat, rec });
-  }
-
-  for (const { chatId, rec } of out) {
-    notifIdSet.add(rec.id);
     try {
       const emoji = TYPE_EMOJI[rec.type] ?? '🔔';
       const text = [
@@ -83,9 +93,9 @@ async function pollOnce() {
       ]
         .filter(Boolean)
         .join('\n');
-      await botInstance.telegram.sendMessage(chatId, text, { parse_mode: 'HTML' });
+      await botInstance.telegram.sendMessage(targetChat, text, { parse_mode: 'HTML' });
     } catch (err) {
-      console.warn(`[relay] send to ${chatId} failed:`, err.message);
+      console.warn(`[relay] send to ${targetChat} failed:`, err.message);
     }
   }
 
@@ -96,6 +106,52 @@ async function pollOnce() {
       const ms = latest.toDate().getTime();
       if (ms > cursor) cursor = ms;
     }
+  }
+}
+
+/**
+ * Send an FCM push to every registered device of a user.
+ * Uses tokens from `users/{uid}.fcmTokens` and prunes ones Firebase rejects
+ * as unregistered so they don't accumulate.
+ */
+async function pushToUser(userId, { title, body, type, link, notifId }) {
+  const user = await getUser(userId).catch(() => null);
+  const tokens = Array.isArray(user?.fcmTokens) ? user.fcmTokens.filter(Boolean).slice(0, 100) : [];
+  if (!tokens.length) return;
+
+  const message = {
+    data: { type, link, notifId, title, body },
+  };
+
+  try {
+    const resp = await messaging.sendEachForMulticast({
+      tokens,
+      notification: { title, body },
+      android: { priority: 'high' },
+      data: message.data,
+    });
+
+    if (resp.failureCount > 0) {
+      const dead = [];
+      resp.responses.forEach((r, i) => {
+        if (r.error) {
+          const code = String(r.error.code ?? '');
+          if (code === 'messaging/registration-token-not-registered' || code === 'messaging/invalid-argument') {
+            dead.push(tokens[i]);
+          }
+        }
+      });
+      if (dead.length) {
+        console.warn(`[relay] pruning ${dead.length} dead FCM token(s) for ${userId}`);
+        await db
+          .collection(COLLECTIONS.users)
+          .doc(String(userId))
+          .update({ fcmTokens: arrayRemove(...dead) })
+          .catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn(`[relay] FCM push to ${userId} failed:`, err.message);
   }
 }
 
