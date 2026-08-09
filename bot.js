@@ -35,13 +35,19 @@ import * as support from './src/services/support.js';
 import * as notify from './src/services/notify.js';
 import * as settings from './src/services/settings.js';
 import { ORDER_STATUS, PRODUCT_STATUS, fmtPrice, fmtDate, esc, mainMenu } from './src/format.js';
+import { r2Configured, uploadToR2 } from './src/storage.js';
 
-const VERSION = 'v1.6.0'; // shown by /health to verify deployed code
+const VERSION = 'v1.7.0'; // shown by /health to verify deployed code
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
   console.error('TELEGRAM_BOT_TOKEN is not set. Create a .env file (see .env.example) or set the env var on your host.');
   process.exit(1);
 }
+
+// Backup channel: every image uploaded on the site is also forwarded here as a
+// live backup copy. The token stays server-side (.env) — never in the browser.
+const BACKUP_CHANNEL = (process.env.TELEGRAM_BACKUP_CHANNEL || '').trim();
+const BACKUP_API_KEY = (process.env.BACKUP_API_KEY || '').trim();
 
 const bot = new Telegraf(BOT_TOKEN);
 const PORT = Number(process.env.PORT) || 3000;
@@ -773,8 +779,25 @@ function normalizePhone(raw) {
   return phone;
 }
 
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 // ── HTTP server; webhook or polling ─────────────────────────────────────
 const server = createServer((req, res) => {
+  // CORS for /api/* endpoints called by the web app from a browser origin.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end(`ok ${VERSION}`);
@@ -784,9 +807,151 @@ const server = createServer((req, res) => {
     bot.webhookCallback('/webhook')(req, res);
     return;
   }
+  if (req.url === '/api/upload' && req.method === 'POST') {
+    handleUpload(req, res).catch((err) => {
+      console.error('[upload] error:', err?.message || err);
+      if (!res.headersSent) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'internal' }));
+      }
+    });
+    return;
+  }
+  if (req.url === '/api/image-backup' && req.method === 'POST') {
+    handleImageBackup(req, res).catch((err) => {
+      console.warn('[backup] handler error:', err.message);
+      if (!res.headersSent) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, sent: false, error: 'internal' }));
+      }
+    });
+    return;
+  }
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');
 });
+
+async function readJsonBody(req) {
+  let body = '';
+  for await (const chunk of req) body += chunk;
+  if (!body) return {};
+  try {
+    return JSON.parse(body);
+  } catch {
+    return {};
+  }
+}
+
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB per image
+
+async function readRawBody(req, limit = MAX_UPLOAD_BYTES) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > limit) {
+      const err = new Error('file_too_large');
+      err.name = 'FileTooLarge';
+      throw err;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * POST /api/upload — primary image upload for the site.
+ * Body: raw image bytes (Content-Type set by the client).
+ * Returns: { ok:true, url, key } where `url` is the public Cloudflare-Cache
+ * delivery link stored in Firestore. Forwards a backup copy to the configured
+ * Telegram channel when available. R2/Telegram credentials never leave the
+ * server environment.
+ */
+async function handleUpload(req, res) {
+  const sendJson = (payload, code = 200) => {
+    res.writeHead(code, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  };
+
+  const contentType = req.headers['content-type'] || 'image/jpeg';
+  const name = String(req.headers['x-file-name'] || '').slice(0, 255);
+  const caption = String(req.headers['x-caption'] || '').slice(0, 1024);
+
+  let buffer;
+  try {
+    buffer = await readRawBody(req);
+  } catch (err) {
+    return sendJson({ ok: false, error: err.name === 'FileTooLarge' ? 'file_too_large' : 'read_failed' });
+  }
+  if (!buffer.length) {
+    return sendJson({ ok: false, error: 'empty_body' });
+  }
+
+  if (!r2Configured()) {
+    console.warn('[upload] R2 is not configured on this server');
+    return sendJson({ ok: false, error: 'storage_not_configured' }, 503);
+  }
+
+  const uploaded = await uploadToR2({ buffer, name, contentType });
+  console.log(`[upload] stored → ${uploaded.key}`);
+
+  // Backup copy to Telegram (best-effort; never breaks the site).
+  if (BACKUP_CHANNEL) {
+    try {
+      await bot.telegram.sendPhoto(BACKUP_CHANNEL, {
+        source: Buffer.from(buffer),
+        filename: name || `backup_${Date.now()}.jpg`,
+      }, {
+        caption: caption ? escapeHtml(caption) : undefined,
+        parse_mode: caption ? 'HTML' : undefined,
+      });
+      console.log(`[upload] backup photo → ${BACKUP_CHANNEL}`);
+    } catch (err) {
+      console.warn(`[upload] telegram backup failed:`, err.message);
+    }
+  }
+
+  return sendJson({ ok: true, url: uploaded.url, key: uploaded.key });
+}
+
+/**
+ * POST /api/image-backup — receives { url, caption } from the site and forwards
+ * the image to the backup Telegram channel. The Telegram bot token is never
+ * exposed to the client; the bot simply downloads the Cloudinary URL and posts
+ * it to the channel. Always answers 200 so a Telegram failure never breaks the
+ * site's upload flow.
+ */
+async function handleImageBackup(req, res) {
+  const sendJson = (payload) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  };
+
+  const data = await readJsonBody(req);
+  const url = typeof data?.url === 'string' ? data.url.trim() : '';
+  const caption = typeof data?.caption === 'string' ? data.caption.slice(0, 1024) : '';
+
+  if (!/^https?:\/\//i.test(url)) {
+    return sendJson({ ok: false, sent: false, error: 'bad_url' });
+  }
+  if (!BACKUP_CHANNEL) {
+    return sendJson({ ok: true, sent: false, error: 'no_channel' });
+  }
+
+  try {
+    // Send the image to the channel. Downstream (input) always ignoring:
+    // if this fails we simply log and still report ok:true to the caller.
+    await bot.telegram.sendPhoto(BACKUP_CHANNEL, url, {
+      caption: caption ? escapeHtml(caption) : undefined,
+      parse_mode: caption ? 'HTML' : undefined,
+    });
+    console.log(`[backup] photo forwarded → ${BACKUP_CHANNEL}: ${caption || url}`);
+    sendJson({ ok: true, sent: true });
+  } catch (err) {
+    console.warn(`[backup] sendPhoto failed:`, err.message);
+    sendJson({ ok: true, sent: false, error: 'telegram' });
+  }
+}
 
 async function start() {
   // Startup diagnostics — make it obvious in Render logs what is running.
