@@ -11,14 +11,6 @@ import { toPlain } from './marketplace.js';
  * that occurred while the process was down are still delivered.
  */
 
-const TYPE_EMOJI = {
-  order: '📦',
-  message: '💬',
-  review: '⭐',
-  follow: '👥',
-  system: '🔔',
-};
-
 // Where the watermark is persisted (Firestore doc, so it survives restarts).
 const CURSOR_DOC = 'relay_state';
 const CURSOR_FIELD = 'cursorMs';
@@ -108,14 +100,14 @@ async function pollOnce() {
     }
     if (!targetChat) continue;
     try {
-      const emoji = TYPE_EMOJI[rec.type] ?? '🔔';
-      const text = [
-        `${emoji} <b>${escapeHtml(rec.title || 'Уведомление')}</b>`,
-        escapeHtml(rec.body || ''),
-        rec.link ? `\nСайтта: ${escapeHtml(rec.link)}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
+      const TYPE_TEXT = {
+        order: '📦 Жаңа тапсырыс келді',
+        message: '💬 Сізге жаңа хабар келді',
+        review: '⭐ Сізге жаңа пікір жазылды',
+        follow: '👥 Сізге жаңа жазылушы қосылды',
+        system: '🔔 Жаңа хабарландыру',
+      };
+      const text = TYPE_TEXT[rec.type] ?? `🔔 ${escapeHtml(rec.title || 'Жаңа хабарландыру')}`;
       await botInstance.telegram.sendMessage(targetChat, text, { parse_mode: 'HTML' });
     } catch (err) {
       console.warn(`[relay] send to ${targetChat} failed:`, err.message);
