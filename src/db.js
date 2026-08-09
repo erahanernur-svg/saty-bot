@@ -62,3 +62,25 @@ export async function getSellerStats(uid) {
   const snap = await db.collection(COLLECTIONS.sellerStats).doc(uid).get();
   return snap.exists ? snap.data() : null;
 }
+
+/**
+ * Find a user by their Telegram @nickname.
+ * Looks up the link doc (telegram_links/<chatId>.telegramUsername → siteUserId),
+ * fallback: users doc with telegramUsername field.
+ */
+export async function findUserByNickname(nick) {
+  const n = String(nick || '').trim().replace(/^@+/, '').toLowerCase();
+  if (!n) return null;
+  const links = await db.collection(COLLECTIONS.links).where('telegramUsername', '==', n).limit(3).get();
+  for (const d of links.docs) {
+    const siteUserId = String(d.data().siteUserId || '');
+    if (!siteUserId) continue;
+    const u = await getUser(siteUserId);
+    if (u?.uid) return u;
+  }
+  const users = await db.collection(COLLECTIONS.users).where('telegramUsername', '==', n).limit(3).get();
+  for (const d of users.docs) {
+    return { uid: String(d.id), ...d.data() };
+  }
+  return null;
+}

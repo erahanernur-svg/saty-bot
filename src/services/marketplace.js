@@ -154,3 +154,19 @@ export async function getProductById(productId) {
   const snap = await db.collection(COLLECTIONS.products).doc(productId).get();
   return snap.exists ? { id: snap.id, ...toPlain(snap.data()) } : null;
 }
+
+/** Admin credits `amount` to a user's balance. Returns the new balance. */
+export async function adminCredit(uid, amount, note = '') {
+  const amt = Number(amount);
+  if (!(amt > 0)) throw new Error('amount must be positive');
+  await db.collection(COLLECTIONS.users).doc(String(uid)).set({ balance: increment(amt) }, { merge: true });
+  await db.collection('balance_ops').add({
+    uid: String(uid),
+    amount: amt,
+    direction: 'credit',
+    note: String(note || ''),
+    createdAt: serverTimestamp(),
+  });
+  const snap = await db.collection(COLLECTIONS.users).doc(String(uid)).get();
+  return snap.exists ? Number(snap.data().balance ?? 0) : amt;
+}

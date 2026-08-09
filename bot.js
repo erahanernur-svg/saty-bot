@@ -29,7 +29,7 @@ try {
 }
 
 // Local modules (do NOT use path aliases; plain relative imports).
-import { db, getUser, getLinkedUserId, getSellerStats } from './src/db.js';
+import { db, getUser, getLinkedUserId, getSellerStats, findUserByNickname } from './src/db.js';
 import * as market from './src/services/marketplace.js';
 import * as support from './src/services/support.js';
 import * as notify from './src/services/notify.js';
@@ -59,8 +59,20 @@ const PUBLIC_URL = (() => {
 })();
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
 
+// Only these Telegram user IDs can use admin commands (comma-separated, no spaces).
+const ADMIN_IDS = new Set(
+  (process.env.ADMIN_IDS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+);
+function isAdminCtx(ctx) {
+  return ADMIN_IDS.has(String(ctx.from?.id));
+}
+
 // ── Tiny flow state machine (waiting for a plain-text reply) ─────────────────
 const flows = new Map(); // chatId -> { step, payload }
+const usernamesSeen = new Set();
 
 function flowGet(chatId) {
   return flows.get(String(chatId));
@@ -106,6 +118,14 @@ bot.use((ctx, next) => {
     const kind = u.message ? 'message' : u.callback_query ? 'callback' : 'update';
     const head = u.message?.text ? `「${u.message.text.slice(0, 40)}」` : u.callback_query?.data ? `cb:${u.callback_query.data}` : '';
     console.log(`[update] ${kind} from ${who} ${head}`);
+  }
+  // Remember the Telegram @username so an admin can credit a user by nickname.
+  if (ctx.from?.username && !usernamesSeen.has(String(ctx.from.id))) {
+    usernamesSeen.add(String(ctx.from.id));
+    db.collection('telegram_links')
+      .doc(String(ctx.from.id))
+      .set({ telegramUsername: String(ctx.from.username).toLowerCase(), chatId: String(ctx.from.id) }, { merge: true })
+      .catch((err) => console.warn('[link username]', err.message));
   }
   return next();
 });
@@ -481,6 +501,30 @@ bot.action(/^withdraw:method:(kaspi|card)$/, async (ctx) => {
   await ctx.reply('💳 <b>Банк картасы</b>\n\nКарта нөмірін енгізіңіз (16 цифр):');
 });
 
+// ── Admin: credit balance to a user by @nickname ─────────────────────────────
+bot.command('admin', async (ctx) => {
+  if (!isAdminCtx(ctx)) return ctx.reply('⛔ Рұқсат жоқ.');
+  await ctx.reply(
+    `🛠 <b>Админ панелі</b>\n\nПайдаланушының @никнеймі арқылы балансқа ақша қосу:`,
+    withKB(
+      Markup.inlineKeyboard([
+        [Markup.button.callback('💰 Ақша қосу', 'admin:credit')],
+        [Markup.button.callback('⬅ Бас мәзір', 'menu')],
+      ]),
+      { parse_mode: 'HTML' }
+    )
+  );
+});
+
+bot.action('admin:credit', async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdminCtx(ctx)) return;
+  flowSet(chatIdOf(ctx), 'admin_credit_nick');
+  await ctx.reply('👤 <b>Ақша қосатын пайдаланушының @никнеймін жазыңыз</b>\n\nМысалы: <code>@satykz</code>', { parse_mode: 'HTML' });
+});
+
+// Text flow: admin credit steps (nick → amount)
+
 // Text flow: withdraw amount entered
 bot.on('text', async (ctx) => {
   const chatId = chatIdOf(ctx);
@@ -537,6 +581,25 @@ bot.on('text', async (ctx) => {
       await support.sendTicketMessage(user, state.payload.ticketId, text);
       flowClear(chatId);
       await ctx.reply('✉️ Жауап жіберілді. Админ көреді.', { parse_mode: 'HTML' });
+    } else if (state.step === 'admin_credit_nick') {
+      if (!isAdminCtx(ctx)) return ctx.reply('⛔ Рұқсат жоқ.');
+      const target = await findUserByNickname(text);
+      if (!target) return ctx.reply('⚠️ Пайдаланушы табылмады. @никнеймін дұрыс жазыңыз немесе пайдаланушы ботқа жалғанбаған.');
+      flowSet(chatId, 'admin_credit_amount', { uid: target.uid, name: target.displayName || target.uid });
+      await ctx.reply(
+        `👤 <b>${esc(target.displayName || target.uid)}</b>\n💰 Баланс: <b>${fmtPrice(target.balance ?? 0)}</b>\n\nҚанша теңге қосу керек?`,
+        { parse_mode: 'HTML' }
+      );
+    } else if (state.step === 'admin_credit_amount') {
+      if (!isAdminCtx(ctx)) return ctx.reply('⛔ Рұқсат жоқ.');
+      const amount = Number((text || '').replace(/[^\d]/g, ''));
+      if (!amount || amount <= 0) return ctx.reply('⚠️ Дұрыс сома енгізіңіз.');
+      const newBalance = await market.adminCredit(state.payload.uid, amount, `tg:${user.uid}`);
+      flowClear(chatId);
+      await ctx.reply(
+        `✅ <b>${esc(state.payload.name)}</b> балансына <b>${fmtPrice(amount)}</b> қосылды.\n💰 Жаңа баланс: <b>${fmtPrice(newBalance)}</b>`,
+        { parse_mode: 'HTML' }
+      );
     } else {
       flowClear(chatId);
     }
