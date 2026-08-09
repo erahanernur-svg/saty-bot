@@ -377,7 +377,7 @@ async function showMyProducts(ctx) {
   await ctx.reply(`🏷️ <b>Менің лоттарым</b>\n\n${lines.join('\n')}`, withKB(Markup.inlineKeyboard(kb), { parse_mode: 'HTML' }));
 }
 
-bot.action(/^prod:(.+)$/, async (ctx) => {
+bot.action(/^prod:(?!price:|hide:|show:)(.+)$/, async (ctx) => {
   await ctx.answerCbQuery();
   const product = await market.getProductById(ctx.match[1]);
   if (!product) return ctx.reply('Лот табылмады.');
@@ -601,9 +601,7 @@ bot.action(/^faq:(.+)$/, async (ctx) => {
   await ctx.reply(`❓ <b>${esc(title)}</b>\n\n${esc(answer)}`, withKB(Markup.inlineKeyboard([[Markup.button.callback('‹ FAQ', 'sup:faq')]]), { parse_mode: 'HTML' }));
 });
 
-bot.action(/^ticket:mon(.+)$/, async (ctx) => { return null; }); // not used
-
-bot.action(/^ticket:(.+)$/, async (ctx) => {
+bot.action(/^ticket:(?!reply:)(.+)$/, async (ctx) => {
   await ctx.answerCbQuery();
   const ticket = await support.getTicketById(ctx.match[1]);
   if (!ticket) return ctx.reply('Тикет табылмады.');
