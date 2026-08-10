@@ -126,8 +126,8 @@ export async function createTopUpRequest({ token, amount }) {
       uid,
       'saty_topup',
       'topup',
-      '⏳ Пополнение ожидает проверки',
-      `Запрос на пополнение ${amt.toLocaleString('ru-RU')} ₸ через Kaspi Pay принят и ожидает подтверждения администратора.\n\nID: ${topUpId}`,
+      '⏳ Толтыру тексеруді күтіп тұр',
+      `Kaspi Pay арқылы ${amt.toLocaleString('ru-RU')} ₸ толтыру сұранысы қабылданды және әкімші растауын күтіп тұр.\n\nID: ${topUpId}`,
       ''
     )
   );
@@ -144,8 +144,8 @@ export async function createTopUpRequest({ token, amount }) {
           a.id,
           uid,
           'topup',
-          'Новое пополнение',
-          `Пользователь: ${payload.userName}\nСумма: ${amt.toLocaleString('ru-RU')} ₸\nТелефон: ${payload.userPhone || '—'}\nID: ${topUpId}`,
+          'Жаңа толтыру',
+          `Пайдаланушы: ${payload.userName}\nСома: ${amt.toLocaleString('ru-RU')} ₸\nТелефон: ${payload.userPhone || '—'}\nID: ${topUpId}`,
           ''
         )
       );
@@ -219,8 +219,8 @@ export async function reviewTopUpRequest({ token, requestId, action, note }) {
         req.userId,
         adminUid,
         'topup',
-        'Пополнение подтверждено',
-        `Ваш запрос ${outcome} подтверждён. Баланс пополнен на ${(Number(req.amount) || 0).toLocaleString('ru-RU')} ₸.`,
+        'Толтыру расталды',
+        `Сұранысыңыз ${outcome} расталды. Балансқа ${(Number(req.amount) || 0).toLocaleString('ru-RU')} ₸ қосылды.`,
         ''
       )
     );
@@ -230,8 +230,8 @@ export async function reviewTopUpRequest({ token, requestId, action, note }) {
         req.userId,
         adminUid,
         'topup',
-        'Пополнение отклонено',
-        `Ваш запрос ${outcome} отклонён${note ? `.\nПричина: ${String(note).slice(0, 500)}` : ''}.`,
+        'Толтыру қабылданбады',
+        `Сұранысыңыз ${outcome} қабылданбады${note ? `.\nСебебі: ${String(note).slice(0, 500)}` : ''}.`,
         ''
       )
     );
