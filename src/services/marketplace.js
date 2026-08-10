@@ -51,6 +51,7 @@ export async function getOrderById(orderId) {
 export async function deliverOrder(orderId) {
   await db.collection(COLLECTIONS.orders).doc(orderId).update({
     status: 'processing',
+    deliveredAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
 }

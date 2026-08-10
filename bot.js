@@ -36,10 +36,11 @@ import * as notify from './src/services/notify.js';
 import * as settings from './src/services/settings.js';
 import * as topup from './src/services/topup.js';
 import * as withdraw from './src/services/withdraw.js';
+import * as orderSvc from './src/services/orders.js';
 import { ORDER_STATUS, PRODUCT_STATUS, fmtPrice, fmtDate, esc, mainMenu } from './src/format.js';
 import { r2Configured, uploadToR2 } from './src/storage.js';
 
-const VERSION = 'v1.8.0'; // shown by /health to verify deployed code
+const VERSION = 'v1.9.0'; // shown by /health to verify deployed code
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
   console.error('TELEGRAM_BOT_TOKEN is not set. Create a .env file (see .env.example) or set the env var on your host.');
@@ -881,6 +882,16 @@ const server = createServer((req, res) => {
     });
     return;
   }
+  if (pathname === '/api/orders/resolve' && req.method === 'POST') {
+    handleOrderResolve(req, res).catch((err) => {
+      console.error('[orders] resolve error:', err.message);
+      if (!res.headersSent) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'internal' }));
+      }
+    });
+    return;
+  }
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');
 });
@@ -1013,6 +1024,28 @@ async function handleMarketVip(req, res) {
   } catch (err) {
     const msg = String(err.message || 'error');
     const known = ['token_required', 'invalid_token', 'product_not_found', 'forbidden', 'insufficient_balance', 'vip_lock'];
+    res.writeHead(known.includes(msg) ? 400 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: msg }));
+  }
+}
+
+/**
+ * POST /api/orders/resolve — admin refunds a buyer or releases money to the
+ * seller on a stuck order. Body: { token, orderId, action }.
+ */
+async function handleOrderResolve(req, res) {
+  const body = await readJsonBody(req);
+  try {
+    const result = await orderSvc.resolveOrderByAdmin({
+      token: body.token,
+      orderId: body.orderId,
+      action: body.action,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    const msg = String(err.message || 'error');
+    const known = ['token_required', 'invalid_token', 'forbidden', 'invalid_action', 'not_found', 'already_resolved'];
     res.writeHead(known.includes(msg) ? 400 : 200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: false, error: msg }));
   }
@@ -1162,6 +1195,17 @@ async function start() {
 
   notify.stopRelay();
   notify.startRelay(bot);
+
+  // Order auto-resolution watchdog: resolves escrow stages whose 36h deadline
+  // passed (paid→refund, processing→release). Cheap scan; idempotent upserts.
+  const WATCHDOG_MS = Math.max(30_000, Number(process.env.ORDER_WATCHDOG_MS) || 60_000);
+  setInterval(() => {
+    orderSvc
+      .autoResolveStuckOrders()
+      .then((done) => done > 0 && console.log(`[orders] watchdog: ${done} auto-resolved`))
+      .catch((err) => console.error('[orders] watchdog error:', err.message));
+  }, WATCHDOG_MS);
+  console.log(`[orders] watchdog armed (every ${WATCHDOG_MS / 1000}s, ${orderSvc.AUTO_RESOLVE_HOURS}h deadline)`);
 
   if (PUBLIC_URL) {
     const webhookUrl = `${PUBLIC_URL}/webhook`;
