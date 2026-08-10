@@ -871,6 +871,16 @@ const server = createServer((req, res) => {
     });
     return;
   }
+  if (pathname === '/api/market/vip' && req.method === 'POST') {
+    handleMarketVip(req, res).catch((err) => {
+      console.error('[market] vip error:', err.message);
+      if (!res.headersSent) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'internal' }));
+      }
+    });
+    return;
+  }
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');
 });
@@ -980,6 +990,29 @@ async function handleWithdrawReview(req, res) {
   } catch (err) {
     const msg = String(err.message || 'error');
     const known = ['token_required', 'invalid_token', 'forbidden', 'invalid_action', 'not_found', 'already_reviewed'];
+    res.writeHead(known.includes(msg) ? 400 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: msg }));
+  }
+}
+
+/**
+ * POST /api/market/vip — seller makes a listing VIP. The server charges
+ * VIP_PRICE (300 ₸) from the seller's balance atomically. Sellers can't un-VIP.
+ * Body: { token, productId, enable: true }.
+ */
+async function handleMarketVip(req, res) {
+  const body = await readJsonBody(req);
+  try {
+    const result = await market.setProductVip({
+      token: body.token,
+      productId: body.productId,
+      enable: body.enable,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    const msg = String(err.message || 'error');
+    const known = ['token_required', 'invalid_token', 'product_not_found', 'forbidden', 'insufficient_balance', 'vip_lock'];
     res.writeHead(known.includes(msg) ? 400 : 200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: false, error: msg }));
   }

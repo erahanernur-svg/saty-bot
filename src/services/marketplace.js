@@ -1,4 +1,15 @@
 import { db, serverTimestamp, increment, COLLECTIONS } from '../db.js';
+import admin from 'firebase-admin';
+
+/** Price charged from the seller's balance to make a listing VIP. */
+const VIP_PRICE = Number(process.env.VIP_PRICE) || 300;
+
+async function verifyToken(token) {
+  if (!token || typeof token !== 'string') throw new Error('token_required');
+  const decoded = await admin.auth().verifyIdToken(token);
+  if (!decoded?.uid) throw new Error('invalid_token');
+  return decoded;
+}
 
 /** Deep-copy Firestore snapshots into plain JS (dates → Date). */
 export function toPlain(data) {
@@ -138,6 +149,53 @@ export async function changeProductStatus(productId, status) {
     status,
     updatedAt: serverTimestamp(),
   });
+}
+
+/**
+ * Make a listing VIP. Charges VIP_PRICE from the seller's balance atomically.
+ * Sellers may NOT remove VIP once set (vip_lock) — the placement is permanent.
+ */
+export async function setProductVip({ token, productId, enable }) {
+  const decoded = await verifyToken(token);
+  const uid = decoded.uid;
+  if (enable !== true) throw new Error('vip_lock');
+
+  const ref = db.collection(COLLECTIONS.products).doc(String(productId));
+  const userRef = db.collection(COLLECTIONS.users).doc(String(uid));
+
+  let status = '';
+  let charged = false;
+
+  await db.runTransaction(async (tx) => {
+    const prodSnap = await tx.get(ref);
+    if (!prodSnap.exists) throw new Error('product_not_found');
+    const prod = prodSnap.data();
+    if (String(prod.sellerId) !== String(uid)) throw new Error('forbidden');
+    if (prod.vip === true) {
+      status = 'already_vip';
+      return;
+    }
+    const userSnap = await tx.get(userRef);
+    const bal = Number(userSnap.exists ? userSnap.data().balance ?? 0 : 0);
+    if (!Number.isFinite(bal) || bal < VIP_PRICE) throw new Error('insufficient_balance');
+
+    tx.update(userRef, { balance: increment(-VIP_PRICE) });
+    tx.update(ref, { vip: true, vipAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    status = 'vip';
+    charged = true;
+  });
+
+  if (charged) {
+    await db.collection('balance_ops').add({
+      uid,
+      amount: VIP_PRICE,
+      direction: 'debit',
+      note: `VIP listing ${productId}`,
+      createdAt: serverTimestamp(),
+    });
+  }
+
+  return { ok: true, status, charged, vipPrice: VIP_PRICE };
 }
 
 export async function getGameById(gameId) {
