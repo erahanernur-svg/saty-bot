@@ -261,7 +261,7 @@ export async function reviewTopUpRequest({ token, requestId, action, note, amoun
       outcome = req.topUpId || req.id || String(requestId);
 
       const updates = {
-        status: action,
+        status: action === 'approve' ? 'approved' : 'rejected',
         reviewedAt: serverTimestamp(),
         reviewedBy: adminUid,
         adminNote: String(note || '').slice(0, 500),
@@ -337,5 +337,5 @@ export async function reviewTopUpRequest({ token, requestId, action, note, amoun
     }).catch((err) => console.warn('[topup] admin chat message failed:', err.message));
   }
 
-  return { ok: true, id: ref.id, status: action, credited: approved ? credited : 0 };
+  return { ok: true, id: ref.id, status: approved ? 'approved' : 'rejected', credited: approved ? credited : 0 };
 }
