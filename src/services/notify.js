@@ -125,8 +125,15 @@ async function pollOnce() {
         review: '⭐ Сізге жаңа пікір жазылды',
         follow: '👥 Сізге жаңа жазылушы қосылды',
         system: '🔔 Жаңа хабарландыру',
+        topup: '💳 Баланс операциясы',
       };
-      const text = TYPE_TEXT[rec.type] ?? `🔔 ${escapeHtml(rec.title || 'Жаңа хабарландыру')}`;
+      // topup notifications carry a full body (amount, id, reason) — show it.
+      let text;
+      if (rec.type === 'topup' && rec.body) {
+        text = `${TYPE_TEXT.topup}: ${escapeHtml(rec.body)}`;
+      } else {
+        text = TYPE_TEXT[rec.type] ?? `🔔 ${escapeHtml(rec.title || 'Жаңа хабарландыру')}`;
+      }
       await botInstance.telegram.sendMessage(targetChat, text, { parse_mode: 'HTML' });
     } catch (err) {
       console.warn(`[relay] send to ${targetChat} failed:`, err.message);

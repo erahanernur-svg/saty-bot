@@ -34,6 +34,7 @@ import * as market from './src/services/marketplace.js';
 import * as support from './src/services/support.js';
 import * as notify from './src/services/notify.js';
 import * as settings from './src/services/settings.js';
+import * as topup from './src/services/topup.js';
 import { ORDER_STATUS, PRODUCT_STATUS, fmtPrice, fmtDate, esc, mainMenu } from './src/format.js';
 import { r2Configured, uploadToR2 } from './src/storage.js';
 
@@ -791,7 +792,7 @@ const server = createServer((req, res) => {
   // CORS for /api/* endpoints called by the web app from a browser origin.
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-File-Name, X-Caption');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-File-Name, X-Caption, Authorization');
 
   const pathname = req.url?.split('?')[0] ?? req.url ?? '';
 
@@ -829,6 +830,26 @@ const server = createServer((req, res) => {
     });
     return;
   }
+  if (pathname === '/api/topup/create' && req.method === 'POST') {
+    handleTopupCreate(req, res).catch((err) => {
+      console.error('[topup] create error:', err.message);
+      if (!res.headersSent) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'internal' }));
+      }
+    });
+    return;
+  }
+  if (pathname === '/api/topup/review' && req.method === 'POST') {
+    handleTopupReview(req, res).catch((err) => {
+      console.error('[topup] review error:', err.message);
+      if (!res.headersSent) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'internal' }));
+      }
+    });
+    return;
+  }
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');
 });
@@ -841,6 +862,47 @@ async function readJsonBody(req) {
     return JSON.parse(body);
   } catch {
     return {};
+  }
+}
+
+/**
+ * POST /api/topup/create — create a pending Kaspi Pay top-up request.
+ * Body: { token, amount }. The server writes the request + notifications.
+ */
+async function handleTopupCreate(req, res) {
+  const body = await readJsonBody(req);
+  try {
+    const result = await topup.createTopUpRequest({ token: body.token, amount: body.amount });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    const msg = String(err.message || 'error');
+    const known = ['token_required', 'invalid_token', 'invalid_amount', 'too_many_pending'];
+    res.writeHead(known.includes(msg) ? 400 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: msg }));
+  }
+}
+
+/**
+ * POST /api/topup/review — admin approves/rejects a top-up request.
+ * Body: { token, requestId, action, note }.
+ */
+async function handleTopupReview(req, res) {
+  const body = await readJsonBody(req);
+  try {
+    const result = await topup.reviewTopUpRequest({
+      token: body.token,
+      requestId: body.requestId,
+      action: body.action,
+      note: body.note,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    const msg = String(err.message || 'error');
+    const known = ['token_required', 'invalid_token', 'forbidden', 'invalid_action', 'not_found', 'already_reviewed'];
+    res.writeHead(known.includes(msg) ? 400 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: msg }));
   }
 }
 
