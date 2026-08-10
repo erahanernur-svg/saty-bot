@@ -78,6 +78,63 @@ function notifyDoc(userId, fromUserId, type, title, body, link = '') {
   return { userId: String(userId), fromUserId: String(fromUserId), type, title, body, link, createdAt: serverTimestamp() };
 }
 
+// ── "Админ" chat (1:1 conversation in the Messages tab) ──────────────────────
+// Auto-creates/updates a conversation between the user and the primary admin,
+// then posts a server-authored message as "Админ". Both sides see it in the
+// site/app Messages tab; the user gets an unread badge + bell notification.
+
+const ADMIN_NAME = 'Админ';
+
+async function resolvePrimaryAdmin() {
+  const snap = await db.collection('admins').limit(1).get();
+  return snap.docs[0]?.id || null;
+}
+
+async function postAdminChatMessage({ userUid, userName, adminUid, text }) {
+  if (!userUid || !adminUid) return;
+  const participants = [String(userUid), String(adminUid)].sort();
+  const convId = `conv_${participants.join('_')}`;
+  const convRef = db.collection('conversations').doc(convId);
+  const preview = String(text).slice(0, 80);
+
+  const convSnap = await convRef.get().catch(() => null);
+  if (!convSnap || !convSnap.exists) {
+    await convRef.set({
+      participants,
+      participantNames: { [userUid]: String(userName || 'Пайдаланушы').slice(0, 64), [adminUid]: ADMIN_NAME },
+      participantAvatars: { [userUid]: '', [adminUid]: '' },
+      productId: '',
+      productName: '',
+      orderId: '',
+      lastMessage: preview,
+      lastMessageAt: serverTimestamp(),
+      lastMessageSenderId: adminUid,
+      unreadCounts: { [userUid]: 1, [adminUid]: 0 },
+      createdAt: serverTimestamp(),
+    });
+  } else {
+    const conv = convSnap.data() || {};
+    const unreadCounts = { ...(conv.unreadCounts || {}) };
+    unreadCounts[userUid] = Number(unreadCounts[userUid] || 0) + 1;
+    await convRef.update({
+      lastMessage: preview,
+      lastMessageAt: serverTimestamp(),
+      lastMessageSenderId: adminUid,
+      unreadCounts,
+    });
+  }
+
+  await db.collection('messages').add({
+    conversationId: convId,
+    senderId: adminUid,
+    senderName: ADMIN_NAME,
+    senderAvatar: '',
+    text,
+    read: false,
+    createdAt: serverTimestamp(),
+  });
+}
+
 /** Create a pending Kaspi Pay top-up request for an authenticated site user. */
 export async function createTopUpRequest({ token, amount, kaspiName }) {
   const decoded = await verifyToken(token);
@@ -99,6 +156,7 @@ export async function createTopUpRequest({ token, amount, kaspiName }) {
 
   const link = await getTelegramLink(uid);
   const topUpId = makeTopUpId();
+  const primaryAdmin = await resolvePrimaryAdmin().catch(() => null);
 
   const payload = {
     topUpId,
@@ -107,6 +165,7 @@ export async function createTopUpRequest({ token, amount, kaspiName }) {
     userPhone: user.phone || '',
     userName: user.displayName || user.nickname || 'Пайдаланушы',
     kaspiName: kName,
+    assignedAdmin: primaryAdmin || '',
     amount: amt,
     currency: 'KZT',
     paymentMethod: 'kaspi_pay',
@@ -133,6 +192,16 @@ export async function createTopUpRequest({ token, amount, kaspiName }) {
       ''
     )
   );
+
+  // Open/update the "Админ" chat with the pending state.
+  if (primaryAdmin) {
+    await postAdminChatMessage({
+      userUid: uid,
+      userName: user.displayName || user.nickname || '',
+      adminUid: primaryAdmin,
+      text: `⏳ Толтыру сұранысы қабылданды: ${kName || 'Каспидегі аты көрсетілмеді'} — ${amt.toLocaleString('ru-RU')} ₸ (${topUpId}).\nKaspi арқылы төлеген соң әкімші растайды.`,
+    }).catch((err) => console.warn('[topup] admin chat message failed:', err.message));
+  }
 
   // Notify every admin so they can verify the payment in the Kaspi app.
   try {
@@ -213,6 +282,7 @@ export async function reviewTopUpRequest({ token, requestId, action, note, amoun
     throw new Error('tx_failed');
   }
 
+  const chatAdmin = req.assignedAdmin || adminUid;
   if (approved) {
     await db.collection(TRANSACTIONS).add({
       userId: String(req.userId),
@@ -242,17 +312,29 @@ export async function reviewTopUpRequest({ token, requestId, action, note, amoun
         ''
       )
     );
+    await postAdminChatMessage({
+      userUid: req.userId,
+      userName: req.userName || '',
+      adminUid: chatAdmin,
+      text: `✅ Толтыру расталды: ${credited.toLocaleString('ru-RU')} ₸ (${outcome}). Балансқа қосылды.`,
+    }).catch((err) => console.warn('[topup] admin chat message failed:', err.message));
   } else {
     await db.collection(COLLECTIONS.notifications).add(
       notifyDoc(
         req.userId,
         adminUid,
         'topup',
-        'Толтыру қабылданбады',
-        `Сұранысыңыз ${outcome} қабылданбады${note ? `.\nСебебі: ${String(note).slice(0, 500)}` : ''}.`,
+        'Толтыру расталмады',
+        `Сұранысыңыз ${outcome} расталмады${note ? `.\nСебебі: ${String(note).slice(0, 500)}` : ''}.`,
         ''
       )
     );
+    await postAdminChatMessage({
+      userUid: req.userId,
+      userName: req.userName || '',
+      adminUid: chatAdmin,
+      text: `❌ Толтыру расталмады (${outcome}).${note ? `\nСебебі: ${String(note).slice(0, 500)}` : ''}`,
+    }).catch((err) => console.warn('[topup] admin chat message failed:', err.message));
   }
 
   return { ok: true, id: ref.id, status: action, credited: approved ? credited : 0 };
