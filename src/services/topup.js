@@ -79,10 +79,11 @@ function notifyDoc(userId, fromUserId, type, title, body, link = '') {
 }
 
 /** Create a pending Kaspi Pay top-up request for an authenticated site user. */
-export async function createTopUpRequest({ token, amount }) {
+export async function createTopUpRequest({ token, amount, kaspiName }) {
   const decoded = await verifyToken(token);
   const uid = decoded.uid;
   const amt = Number(amount);
+  const kName = String(kaspiName || '').trim().slice(0, 64);
 
   if (!Number.isInteger(amt) || !(amt >= MIN_TOPUP) || !(amt <= MAX_TOPUP)) {
     throw new Error('invalid_amount');
@@ -105,6 +106,7 @@ export async function createTopUpRequest({ token, amount }) {
     userEmail: decoded.email || user.email || '',
     userPhone: user.phone || '',
     userName: user.displayName || user.nickname || 'Пайдаланушы',
+    kaspiName: kName,
     amount: amt,
     currency: 'KZT',
     paymentMethod: 'kaspi_pay',
@@ -145,7 +147,7 @@ export async function createTopUpRequest({ token, amount }) {
           uid,
           'topup',
           'Жаңа толтыру',
-          `Пайдаланушы: ${payload.userName}\nСома: ${amt.toLocaleString('ru-RU')} ₸\nТелефон: ${payload.userPhone || '—'}\nID: ${topUpId}`,
+          `Пайдаланушы: ${payload.userName}\nKaspi аты: ${kName || '—'}\nСома: ${amt.toLocaleString('ru-RU')} ₸\nТелефон: ${payload.userPhone || '—'}\nID: ${topUpId}`,
           ''
         )
       );
@@ -158,17 +160,26 @@ export async function createTopUpRequest({ token, amount }) {
   return { ok: true, id: ref.id, topUpId, link: KASPI_LINK, status: 'pending' };
 }
 
-/** Admin approves or rejects a top-up request. Atomic, double-payment safe. */
-export async function reviewTopUpRequest({ token, requestId, action, note }) {
+/** Admin approves or rejects a top-up request. Atomic, double-payment safe.
+ *  `amount` (optional, approve only) lets the admin correct the credited sum
+ *  to what actually arrived in the Kaspi app (e.g. user wrote 1000, sent 100). */
+export async function reviewTopUpRequest({ token, requestId, action, note, amount }) {
   const decoded = await verifyToken(token);
   const adminUid = decoded.uid;
   if (action !== 'approve' && action !== 'reject') throw new Error('invalid_action');
   if (!(await isSiteAdmin(adminUid))) throw new Error('forbidden');
 
+  let override = null;
+  if (action === 'approve' && amount !== undefined && amount !== null && amount !== '') {
+    override = Number(amount);
+    if (!Number.isInteger(override) || override <= 0 || override > MAX_TOPUP) throw new Error('invalid_amount');
+  }
+
   const ref = db.collection(TOPUPS).doc(String(requestId));
   let approved = false;
   let req = null;
   let outcome = '';
+  let credited = 0;
 
   try {
     await db.runTransaction(async (tx) => {
@@ -177,28 +188,35 @@ export async function reviewTopUpRequest({ token, requestId, action, note }) {
       req = snap.data();
       if (req.status !== 'pending') throw new Error('already_reviewed');
 
+      credited = override !== null ? override : Number(req.amount) || 0;
       outcome = req.topUpId || req.id || String(requestId);
-      tx.update(ref, {
+
+      const updates = {
         status: action,
         reviewedAt: serverTimestamp(),
         reviewedBy: adminUid,
         adminNote: String(note || '').slice(0, 500),
-      });
+      };
+      if (action === 'approve' && override !== null) {
+        updates.creditedAmount = credited;
+        updates.requestedAmount = Number(req.amount) || 0;
+      }
+      tx.update(ref, updates);
 
       if (action === 'approve') {
         approved = true;
-        tx.set(db.collection(COLLECTIONS.users).doc(String(req.userId)), { balance: increment(Number(req.amount) || 0) }, { merge: true });
+        tx.set(db.collection(COLLECTIONS.users).doc(String(req.userId)), { balance: increment(credited) }, { merge: true });
       }
     });
   } catch (err) {
-    if (err.message === 'already_reviewed' || err.message === 'not_found') throw err;
+    if (err.message === 'already_reviewed' || err.message === 'not_found' || err.message === 'invalid_amount') throw err;
     throw new Error('tx_failed');
   }
 
   if (approved) {
     await db.collection(TRANSACTIONS).add({
       userId: String(req.userId),
-      amount: Number(req.amount) || 0,
+      amount: credited,
       type: 'deposit',
       method: 'kaspi_pay',
       status: 'completed',
@@ -209,7 +227,7 @@ export async function reviewTopUpRequest({ token, requestId, action, note }) {
     });
     await db.collection('balance_ops').add({
       uid: String(req.userId),
-      amount: Number(req.amount) || 0,
+      amount: credited,
       direction: 'credit',
       note: `Kaspi Pay top-up ${outcome} by ${adminUid}`,
       createdAt: serverTimestamp(),
@@ -220,7 +238,7 @@ export async function reviewTopUpRequest({ token, requestId, action, note }) {
         adminUid,
         'topup',
         'Толтыру расталды',
-        `Сұранысыңыз ${outcome} расталды. Балансқа ${(Number(req.amount) || 0).toLocaleString('ru-RU')} ₸ қосылды.`,
+        `Сұранысыңыз ${outcome} расталды. Балансқа ${credited.toLocaleString('ru-RU')} ₸ қосылды.`,
         ''
       )
     );
@@ -237,5 +255,5 @@ export async function reviewTopUpRequest({ token, requestId, action, note }) {
     );
   }
 
-  return { ok: true, id: ref.id, status: action };
+  return { ok: true, id: ref.id, status: action, credited: approved ? credited : 0 };
 }

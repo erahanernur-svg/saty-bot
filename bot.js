@@ -872,7 +872,7 @@ async function readJsonBody(req) {
 async function handleTopupCreate(req, res) {
   const body = await readJsonBody(req);
   try {
-    const result = await topup.createTopUpRequest({ token: body.token, amount: body.amount });
+    const result = await topup.createTopUpRequest({ token: body.token, amount: body.amount, kaspiName: body.kaspiName });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   } catch (err) {
@@ -895,6 +895,7 @@ async function handleTopupReview(req, res) {
       requestId: body.requestId,
       action: body.action,
       note: body.note,
+      amount: body.amount,
     });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
