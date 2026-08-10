@@ -35,10 +35,11 @@ import * as support from './src/services/support.js';
 import * as notify from './src/services/notify.js';
 import * as settings from './src/services/settings.js';
 import * as topup from './src/services/topup.js';
+import * as withdraw from './src/services/withdraw.js';
 import { ORDER_STATUS, PRODUCT_STATUS, fmtPrice, fmtDate, esc, mainMenu } from './src/format.js';
 import { r2Configured, uploadToR2 } from './src/storage.js';
 
-const VERSION = 'v1.7.2'; // shown by /health to verify deployed code
+const VERSION = 'v1.8.0'; // shown by /health to verify deployed code
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
   console.error('TELEGRAM_BOT_TOKEN is not set. Create a .env file (see .env.example) or set the env var on your host.');
@@ -850,6 +851,26 @@ const server = createServer((req, res) => {
     });
     return;
   }
+  if (pathname === '/api/withdraw/create' && req.method === 'POST') {
+    handleWithdrawCreate(req, res).catch((err) => {
+      console.error('[withdraw] create error:', err.message);
+      if (!res.headersSent) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'internal' }));
+      }
+    });
+    return;
+  }
+  if (pathname === '/api/withdraw/review' && req.method === 'POST') {
+    handleWithdrawReview(req, res).catch((err) => {
+      console.error('[withdraw] review error:', err.message);
+      if (!res.headersSent) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'internal' }));
+      }
+    });
+    return;
+  }
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');
 });
@@ -896,6 +917,63 @@ async function handleTopupReview(req, res) {
       action: body.action,
       note: body.note,
       amount: body.amount,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    const msg = String(err.message || 'error');
+    const known = ['token_required', 'invalid_token', 'forbidden', 'invalid_action', 'not_found', 'already_reviewed'];
+    res.writeHead(known.includes(msg) ? 400 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: msg }));
+  }
+}
+
+/**
+ * POST /api/withdraw/create — user submits a Kaspi withdrawal request.
+ * Body: { token, amount, kaspiName, kaspiPhone }. Reserves the balance,
+ * computes the fee server-side and stores the pending request.
+ */
+async function handleWithdrawCreate(req, res) {
+  const body = await readJsonBody(req);
+  try {
+    const result = await withdraw.createWithdrawRequest({
+      token: body.token,
+      amount: body.amount,
+      kaspiName: body.kaspiName,
+      kaspiPhone: body.kaspiPhone,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    const msg = String(err.message || 'error');
+    const known = [
+      'token_required',
+      'invalid_token',
+      'invalid_amount',
+      'invalid_kaspi_name',
+      'invalid_phone',
+      'user_not_found',
+      'insufficient_balance',
+      'too_many_pending',
+    ];
+    res.writeHead(known.includes(msg) ? 400 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: msg }));
+  }
+}
+
+/**
+ * POST /api/withdraw/review — admin completes ('complete') or rejects ('reject')
+ * a withdrawal. Body: { token, requestId, action, note }. Rejection refunds the
+ * reserved amount; completion releases it (money sent via Kaspi by the admin).
+ */
+async function handleWithdrawReview(req, res) {
+  const body = await readJsonBody(req);
+  try {
+    const result = await withdraw.reviewWithdrawRequest({
+      token: body.token,
+      requestId: body.requestId,
+      action: body.action,
+      note: body.note,
     });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));

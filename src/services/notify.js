@@ -126,11 +126,12 @@ async function pollOnce() {
         follow: '👥 Сізге жаңа жазылушы қосылды',
         system: '🔔 Жаңа хабарландыру',
         topup: '💳 Баланс операциясы',
+        withdraw: '🏦 Ақша шығару',
       };
-      // topup notifications carry a full body (amount, id, reason) — show it.
+      // topup/withdraw notifications carry a full body (amount, id, reason) — show it.
       let text;
-      if (rec.type === 'topup' && rec.body) {
-        text = `${TYPE_TEXT.topup}: ${escapeHtml(rec.body)}`;
+      if ((rec.type === 'topup' || rec.type === 'withdraw') && rec.body) {
+        text = `${TYPE_TEXT[rec.type]}: ${escapeHtml(rec.body)}`;
       } else {
         text = TYPE_TEXT[rec.type] ?? `🔔 ${escapeHtml(rec.title || 'Жаңа хабарландыру')}`;
       }

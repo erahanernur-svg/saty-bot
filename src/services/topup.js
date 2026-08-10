@@ -85,12 +85,12 @@ function notifyDoc(userId, fromUserId, type, title, body, link = '') {
 
 const ADMIN_NAME = 'Админ';
 
-async function resolvePrimaryAdmin() {
+export async function resolvePrimaryAdmin() {
   const snap = await db.collection('admins').limit(1).get();
   return snap.docs[0]?.id || null;
 }
 
-async function postAdminChatMessage({ userUid, userName, adminUid, text }) {
+export async function postAdminChatMessage({ userUid, userName, adminUid, text }) {
   if (!userUid || !adminUid) return;
   const participants = [String(userUid), String(adminUid)].sort();
   const convId = `conv_${participants.join('_')}`;
