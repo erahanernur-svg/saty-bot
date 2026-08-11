@@ -176,9 +176,6 @@ async function resolveStuckOrder(order) {
   const orderId = String(order.id ?? '');
   const conv = await findOrderConversation(orderId);
 
-  // A human admin already joined the order chat → let them handle it manually.
-  if (conv?.data?.adminId) return { skipped: true };
-
   if (order.status === 'paid') {
     const res = await refundOrder(orderId);
     if (!res.refunded) return { skipped: true };
